@@ -1,0 +1,143 @@
+---
+title: "Harness Tool Gateway: Register and Execute Agent Tools"
+sidebarTitle: "Tool Gateway"
+description: "Register function tools and MCP fixtures with @jami-studio/harness-tools for a full execution envelope with policy, trace, audit, evidence, and redaction."
+---
+
+`@jami-studio/harness-tools` is the production-shaped tool gateway for Jami Harness. Every tool call — whether it results in execution, denial, or an unsupported adapter — passes through a single execution envelope that produces typed policy, trace, audit, evidence, artifact, and redaction records. You register tools against the registry, and the gateway handles the rest.
+
+## Installation
+
+```bash
+npm install @jami-studio/harness-tools
+```
+
+**Package:** `@jami-studio/harness-tools` · **Version:** `0.1.0`
+
+## Supported Adapters
+
+The gateway ships with two fully supported adapter paths and explicit fail-closed manifests for everything else:
+
+<CardGroup cols={2}>
+  <Card title="function" icon="function" color="#22c55e">
+    **Fully supported.** Register any async function handler with risk labels, scopes, timeouts, and capability manifests. First-party source inspection is included.
+  </Card>
+  <Card title="mcp_trusted_fixture" icon="plug" color="#22c55e">
+    **Narrow support.** Trusted in-process MCP `2025-11-25` fixture discovery and `tools/call` mapping through the same execution envelope. Accepts metadata only from trusted fixture servers.
+  </Card>
+</CardGroup>
+
+<Warning>
+  The following adapter IDs are **not yet supported** and fail closed: `openapi`, `shell`, `browser`, `code`, `provider-as-tool`, `a2a`. Each produces typed unsupported evidence records without invoking any external API, shell, browser, or agent endpoint. Do not attempt to use these adapter IDs for live execution.
+</Warning>
+
+## Registering and Executing a Function Tool
+
+Import `createToolRegistry` and `executeToolWithPolicy`, register your tool, then execute it. The gateway runs the policy check before invoking your handler:
+
+```js
+import { createToolRegistry, executeToolWithPolicy } from '@jami-studio/harness-tools';
+
+const registry = createToolRegistry();
+
+registry.register({
+  toolId: 'tool_summarize',
+  adapterId: 'function',
+  riskLabel: 'low',
+  scopes: ['content:read'],
+  timeout: 5000,
+  handler: async ({ text }) => ({ summary: text.slice(0, 100) }),
+});
+
+const result = await executeToolWithPolicy(registry, {
+  toolId: 'tool_summarize',
+  actorId: 'agent_writer',
+  runId: 'run_draft_campaign',
+  input: { text: 'Long article content...' },
+});
+
+console.log(result.outcome);       // 'completed' | 'denied' | 'unsupported' | 'error'
+console.log(result.traceRef);      // reference to the traceEvent record
+console.log(result.auditRef);      // reference to the auditEvent record
+console.log(result.evidenceRef);   // reference to the evidencePacket record
+```
+
+<Info>
+  Denied executions do not invoke your handler. Unsupported adapters fail closed immediately and still produce typed `traceEvent`, `auditEvent`, `evidencePacket`, `artifactRecord`, and `toolExecution` records — so your observability pipeline sees every call regardless of outcome.
+</Info>
+
+## Execution Envelope
+
+Every call through the gateway produces a `toolExecution` record that includes references to:
+
+- **Policy** — the `policyDecision` that allowed or denied the call
+- **Trace** — a `traceEvent` with redacted input/output attributes
+- **Audit** — an `auditEvent` for non-allow and error outcomes
+- **Evidence** — an `evidencePacket` tying the execution to its source and redaction state
+- **Artifact** — an `artifactRecord` for the execution output
+- **Redaction** — the redaction policy applied to inputs, results, and metadata
+
+Inputs and results are redacted before they reach the trace, evidence, and artifact outputs.
+
+## Adapter Inspection
+
+Use these helpers to inspect adapter readiness at runtime or in the CLI:
+
+<CardGroup cols={3}>
+  <Card title="listToolAdapterCapabilities()" icon="list">
+    Returns the current adapter readiness inventory — which adapters are supported, unsupported, or locked.
+  </Card>
+  <Card title="listToolAdapterSourceLocks()" icon="lock">
+    Returns source-lock states for supported adapters (`function`, `mcp_trusted_fixture`) and missing-source-lock evidence for unsupported ones.
+  </Card>
+  <Card title="dryRunUnsupportedAdapter(adapterId)" icon="flask">
+    Produces typed unsupported evidence for any unsupported adapter ID without invoking any external system.
+  </Card>
+</CardGroup>
+
+```js
+import {
+  listToolAdapterCapabilities,
+  listToolAdapterSourceLocks,
+  dryRunUnsupportedAdapter,
+} from '@jami-studio/harness-tools';
+
+// Check what's available
+const capabilities = listToolAdapterCapabilities();
+console.log(capabilities);
+
+// Inspect source-lock states
+const locks = listToolAdapterSourceLocks();
+console.log(locks);
+
+// Produce unsupported evidence for a dry run (no external calls)
+const evidence = await dryRunUnsupportedAdapter('openapi');
+console.log(evidence.status); // 'unsupported'
+```
+
+You can also inspect adapter status from the CLI without writing any code:
+
+```bash
+jami tools --json
+```
+
+## MCP Adapter Notes
+
+MCP support is intentionally narrow. The `mcp_trusted_fixture` path:
+
+- Validates current repo-local MCP source-lock evidence
+- Accepts tool metadata only from trusted in-process fixture servers
+- Maps `initialize`, `tools/list`, and `tools/call` through the execution envelope
+- Rejects poisoned tool metadata before registration
+
+The following MCP capabilities remain unsupported: stdio subprocess transport, remote Streamable HTTP transport, OAuth, resources, prompts, roots, sampling, elicitation, tasks, resumability, and full MCP SDK parity.
+
+<Note>
+  Direct `adapter_mcp` tool registration is not an executable path. Only tools produced by the trusted in-process fixture discovery helper are executed via MCP. Direct MCP-shaped registrations fail closed and produce unsupported evidence records.
+</Note>
+
+## Further Reading
+
+- [`@jami-studio/harness-policy`](/packages/policy) — policy evaluation runs before every tool handler invocation
+- [`@jami-studio/harness-contracts`](/packages/contracts) — the `toolExecution`, `traceEvent`, `auditEvent`, and `evidencePacket` schema anchors that every execution envelope references
+- [`@jami-studio/harness-observability`](/packages/observability) — wire up sinks to capture the trace and audit records produced by the gateway

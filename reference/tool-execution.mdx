@@ -1,0 +1,229 @@
+---
+title: "toolExecution Schema: Policy-Gated Tool Records"
+sidebarTitle: "toolExecution"
+description: "Completed, denied, and unsupported calls all produce a toolExecution record in Jami Harness. Learn the schema, all status codes, and the redaction model."
+---
+
+The `toolExecution` schema captures the complete lifecycle of a single tool call inside a Jami Harness run. The harness creates one record for every tool invocation regardless of outcome — a completed call, a policy denial, and an unsupported adapter each produce a fully-formed `toolExecution` with typed references to the policy decision, audit event, trace context, evidence packet, artifact, and redaction state that apply to it. This means your audit trail and observability pipeline are always complete; no outcome is silently dropped.
+
+<Info>
+  **Schema ID:** `https://jami.studio/schemas/harness/tool-execution.schema.json`
+  — version `2026-06-09`
+</Info>
+
+## How tool executions fit in a run
+
+When the harness receives a tool call request it immediately evaluates the configured policy engine. The policy engine produces a `policyDecision`. If the decision is `allow`, the harness dispatches to the registered adapter and awaits a result within `timeoutMs`. Regardless of whether the call is allowed, denied, times out, is cancelled, or encounters an unsupported adapter, the harness writes the `toolExecution` record with all six required references populated before the corresponding `runEvent` is emitted. Non-completed executions never populate unredacted result output.
+
+## Status codes
+
+<CardGroup cols={3}>
+  <Card title="completed" icon="circle-check">
+    The adapter ran successfully and returned a result. Result fields are subject to the `redaction.resultPolicy`.
+  </Card>
+  <Card title="denied" icon="ban">
+    Policy blocked execution before the adapter was called. `resultPolicy` is always `omitted` for denied records.
+  </Card>
+  <Card title="unsupported" icon="triangle-exclamation">
+    The adapter is registered but explicitly marked unsupported. The harness fails closed and records the typed error.
+  </Card>
+  <Card title="timeout" icon="clock">
+    The adapter did not respond within `timeoutMs`. The harness cancels the call and sets `endedAt`.
+  </Card>
+  <Card title="cancelled" icon="circle-xmark">
+    The parent run was cancelled while the tool was in flight.
+  </Card>
+  <Card title="failed" icon="circle-exclamation">
+    The adapter returned an error. The `error` object carries a typed `code` and `message`.
+  </Card>
+</CardGroup>
+
+## Schema fields
+
+<ResponseField name="schemaVersion" type="string" required>
+  Always `"2026-06-09"`. The harness rejects records with any other value.
+</ResponseField>
+
+<ResponseField name="executionId" type="string" required>
+  Unique identifier for this execution record. Must match `^tex_[a-z0-9][a-z0-9_-]*$`.
+</ResponseField>
+
+<ResponseField name="runId" type="string" required>
+  Identifier of the parent run. Must match `^run_[a-z0-9][a-z0-9_-]*$`.
+</ResponseField>
+
+<ResponseField name="toolId" type="string" required>
+  Identifier of the tool definition. Must match `^tool_[a-z0-9][a-z0-9_-]*$`.
+</ResponseField>
+
+<ResponseField name="adapterId" type="string" required>
+  Identifier of the adapter that handled (or attempted to handle) this call. Must match `^adapter_[a-z0-9][a-z0-9_-]*$`.
+</ResponseField>
+
+<ResponseField name="status" type="string (enum)" required>
+  Final outcome of the execution. One of: `completed`, `denied`, `unsupported`, `timeout`, `cancelled`, `failed`.
+</ResponseField>
+
+<ResponseField name="policyDecisionRef" type="string" required>
+  Reference to the `policyDecision` record that authorized or denied this call. Must match `^pol_[a-z0-9][a-z0-9_-]*$`. Always populated — even denied calls reference the decision that denied them.
+</ResponseField>
+
+<ResponseField name="auditRef" type="string" required>
+  Reference to the `auditEvent` record for this execution. Must match `^aud_[a-z0-9][a-z0-9_-]*$`.
+</ResponseField>
+
+<ResponseField name="traceRef" type="string" required>
+  Reference to the trace record for this execution. Must match `^trc_[a-z0-9][a-z0-9_-]*$`.
+</ResponseField>
+
+<ResponseField name="evidenceRef" type="string" required>
+  Reference to the `evidencePacket` that captures the provenance of this execution. Must match `^ev_[a-z0-9][a-z0-9_-]*$`.
+</ResponseField>
+
+<ResponseField name="artifactRef" type="string" required>
+  Reference to the `artifactRecord` that stores any output produced by this execution. Must match `^art_[a-z0-9][a-z0-9_-]*$`. Present even when no output was produced — the artifact record carries the appropriate redaction state in that case.
+</ResponseField>
+
+<ResponseField name="startedAt" type="string (date-time)">
+  ISO 8601 timestamp of when the harness dispatched the tool call.
+</ResponseField>
+
+<ResponseField name="endedAt" type="string (date-time)">
+  ISO 8601 timestamp of when the execution resolved, timed out, or was cancelled.
+</ResponseField>
+
+<ResponseField name="timeoutMs" type="integer">
+  Maximum allowed wall-clock duration in milliseconds. Must be at least `1`. The harness cancels the adapter call if this limit is exceeded.
+</ResponseField>
+
+<ResponseField name="capabilityManifestRef" type="string">
+  Optional reference to the `capabilityManifest` that declared this tool's capabilities. Must match `^cap_[a-z0-9][a-z0-9_-]*$`.
+</ResponseField>
+
+<ResponseField name="redaction" type="object" required>
+  Controls what input and result data appears in the stored record.
+
+  <Expandable title="redaction fields">
+    <ResponseField name="inputPolicy" type="string (enum)" required>
+      How the tool's input arguments are stored. One of `none` (stored as-is), `redacted` (fields listed in `redactedFields` are replaced), or `omitted` (all input is absent from the record).
+    </ResponseField>
+    <ResponseField name="resultPolicy" type="string (enum)" required>
+      How the tool's result is stored. Same values as `inputPolicy`. Non-completed executions must use `omitted`.
+    </ResponseField>
+    <ResponseField name="redactedFields" type="array of string" required>
+      JSONPath expressions identifying fields that were replaced under `redacted` mode. Empty array when mode is `none` or `omitted`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="error" type="object">
+  Present when `status` is `denied`, `unsupported`, `timeout`, `cancelled`, or `failed`.
+
+  <Expandable title="error fields">
+    <ResponseField name="code" type="string" required>
+      Machine-readable error code. The harness uses `policy_denied` for policy denials and `adapter_unsupported` for unsupported adapters.
+    </ResponseField>
+    <ResponseField name="message" type="string" required>
+      Human-readable description of the error.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Examples
+
+<CodeGroup>
+
+```json Completed execution
+{
+  "schemaVersion": "2026-06-09",
+  "executionId": "tex_local_echo",
+  "runId": "run_tool_gateway",
+  "toolId": "tool_echo",
+  "adapterId": "adapter_function",
+  "status": "completed",
+  "policyDecisionRef": "pol_tool_gateway_echo_allow",
+  "auditRef": "aud_tool_gateway_echo_allow",
+  "traceRef": "trc_tool_gateway_echo",
+  "evidenceRef": "ev_tool_gateway_echo",
+  "artifactRef": "art_tool_gateway_echo",
+  "startedAt": "2026-06-09T12:00:00.000Z",
+  "endedAt": "2026-06-09T12:00:01.000Z",
+  "timeoutMs": 1000,
+  "capabilityManifestRef": "cap_function_tool_gateway",
+  "redaction": {
+    "inputPolicy": "redacted",
+    "resultPolicy": "redacted",
+    "redactedFields": ["$.input.apiKey", "$.result.token"]
+  }
+}
+```
+
+```json Denied execution
+{
+  "schemaVersion": "2026-06-09",
+  "executionId": "tex_release_publish_denied",
+  "runId": "run_tool_gateway",
+  "toolId": "tool_publish_release",
+  "adapterId": "adapter_function",
+  "status": "denied",
+  "policyDecisionRef": "pol_tool_gateway_publish_deny",
+  "auditRef": "aud_tool_gateway_publish_deny",
+  "traceRef": "trc_tool_gateway_publish",
+  "evidenceRef": "ev_tool_gateway_publish",
+  "artifactRef": "art_tool_gateway_publish",
+  "startedAt": "2026-06-09T12:00:00.000Z",
+  "endedAt": "2026-06-09T12:00:00.000Z",
+  "capabilityManifestRef": "cap_function_tool_gateway",
+  "redaction": {
+    "inputPolicy": "redacted",
+    "resultPolicy": "omitted",
+    "redactedFields": []
+  },
+  "error": {
+    "code": "policy_denied",
+    "message": "tool execution denied by policy"
+  }
+}
+```
+
+```json Unsupported adapter
+{
+  "schemaVersion": "2026-06-09",
+  "executionId": "tex_mcp_unsupported",
+  "runId": "run_tool_gateway",
+  "toolId": "tool_mcp_fixture",
+  "adapterId": "adapter_mcp",
+  "status": "unsupported",
+  "policyDecisionRef": "pol_tool_gateway_mcp_deny",
+  "auditRef": "aud_tool_gateway_mcp_deny",
+  "traceRef": "trc_tool_gateway_mcp",
+  "evidenceRef": "ev_tool_gateway_mcp",
+  "artifactRef": "art_tool_gateway_mcp",
+  "startedAt": "2026-06-09T12:00:00.000Z",
+  "endedAt": "2026-06-09T12:00:00.000Z",
+  "capabilityManifestRef": "cap_mcp_tool_gateway",
+  "redaction": {
+    "inputPolicy": "redacted",
+    "resultPolicy": "omitted",
+    "redactedFields": []
+  },
+  "error": {
+    "code": "adapter_unsupported",
+    "message": "adapter is declared unsupported until adapter verification is complete"
+  }
+}
+```
+
+</CodeGroup>
+
+## Validation invariants
+
+<Warning>
+  The harness enforces these rules across all six required reference fields. A record missing any of them is invalid.
+</Warning>
+
+- All six reference fields (`policyDecisionRef`, `auditRef`, `traceRef`, `evidenceRef`, `artifactRef`, and the `redaction` object itself) are **required on every record**, regardless of `status`.
+- Non-completed executions (`denied`, `unsupported`, `timeout`, `cancelled`, `failed`) must set `redaction.resultPolicy` to `"omitted"`.
+- Unsupported adapters must use the typed `"unsupported"` status and include an `error.code` of `"adapter_unsupported"`. Returning `"failed"` for an unsupported adapter is invalid.
+- `timeoutMs` must be at least `1` when present. Setting it to `0` is not allowed.
+- `endedAt` must not precede `startedAt` when both are present.

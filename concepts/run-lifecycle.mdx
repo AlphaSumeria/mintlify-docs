@@ -1,0 +1,114 @@
+---
+title: "Understanding the Jami Harness Agent Run Lifecycle"
+sidebarTitle: "Run Lifecycle"
+description: "Learn how Jami Harness runs progress through states from start to completion, what each state means, and how to checkpoint and resume interrupted runs."
+---
+
+Every unit of agent work in Jami Harness is a **run**. A run is identified by a `runId`, executes through a configured provider, and emits a stream of typed `runEvent` records that let you observe and react to everything the agent does. Understanding the run lifecycle helps you build reliable agents that handle approvals, recover from failures, and produce auditable results.
+
+## What is a Run?
+
+A run is the top-level execution context for a Jami Harness agent task. You create one by calling `harness.run()` with at minimum a `runId`, a `sourceRepo`, a `sourceCommit`, and a `sourceRef`. The harness ties every event, policy decision, tool call, memory record, and artifact to that identity, so the full trail is always traceable back to a specific source state.
+
+```js
+import { createHarness } from '@jami-studio/harness-sdk';
+
+const harness = createHarness();
+
+const result = await harness.run({
+  runId: 'run_my_task',
+  sourceRepo: 'my-repo',
+  sourceCommit: 'abc123',
+  sourceRef: 'refs/heads/main',
+});
+
+console.log(result.status); // 'completed' | 'failed' | 'approval_required' | ...
+```
+
+<Note>
+  The default provider is the **local deterministic provider** (`@jami-studio/harness-provider-local`). It runs fully in-process and produces reproducible results suitable for development and CI. Hosted providers fail closed until source-lock, auth, redaction, policy, and adapter fixtures are in place — do not assume a hosted execution path is available today.
+</Note>
+
+### runId naming rules
+
+Every `runId` must match the pattern `run_[a-z0-9][a-z0-9_-]*`. Use lowercase letters, digits, underscores, and hyphens only. The `run_` prefix is required. Names like `run_my_task`, `run_publish-release`, and `run_2024_audit` are all valid.
+
+## Run States
+
+A run transitions through a well-defined set of states. Each state corresponds to a meaningful moment in the agent's lifecycle.
+
+<Accordion title="start">
+  The run has been accepted and the harness has begun execution. Source identity, provider, policy engine, tool registry, and memory are all initialised. The initial `run_started` event is emitted and persisted to the configured checkpoint store.
+</Accordion>
+
+<Accordion title="progress">
+  The run is actively executing. Tool calls, memory reads and writes, and policy evaluations all happen during this phase. Each significant action emits a `progress` run event. Your observability sinks receive trace and metric records in real time.
+</Accordion>
+
+<Accordion title="approval_required">
+  The policy engine evaluated a proposed action and returned `needs_approval`. The run is paused — no further tool execution happens until a human explicitly approves or denies the pending action. Use `jami approve` or `jami deny` to resume. See [Policy & Governance](/concepts/policy-governance) for the full approval workflow.
+</Accordion>
+
+<Accordion title="failed">
+  The run encountered an unrecoverable error or a policy denial without an approval path. A typed `failure` run event is emitted with redacted error context. Evidence and trace records are still produced so you can diagnose what went wrong.
+</Accordion>
+
+<Accordion title="completed">
+  The run finished successfully. A `completion` run event is emitted with a reference to any produced artifacts and the final evidence packet. `result.status` is `'completed'`.
+</Accordion>
+
+<Accordion title="cancelled">
+  The run was cancelled before completion, either programmatically or through the CLI. A cancellation event is emitted and the current checkpoint is persisted so the run can be inspected post-cancellation.
+</Accordion>
+
+## runEvent Types
+
+Every meaningful moment in a run emits a typed `runEvent`. Your observability sinks receive all of these automatically; you can also subscribe directly if your integration needs fine-grained reaction.
+
+| Event type | When it fires |
+|---|---|
+| `run_started` | Run accepted, harness initialised |
+| `progress` | Mid-run step, tool call, or memory operation |
+| `completion` | Run finished successfully |
+| `failure` | Run terminated with an error or unrecoverable denial |
+| `ui_payload` | A data payload intended for display in a UI slot |
+| `artifact_view` | A reference to a produced artifact for UI rendering |
+| `policy_decision` | A policy evaluation result (allow, deny, needs_approval, needs_owner) |
+
+## Checkpoints and Resume
+
+When a run pauses — because it needs approval, is cancelled, or fails partway through — the harness saves a **checkpoint**. A checkpoint is a redacted snapshot of the current run state combined with a `replayHash` that lets the harness deterministically reconstruct what happened up to that point without re-executing completed steps.
+
+Checkpoints are stored in the configured checkpoint store. By default this is the in-memory local store (`@jami-studio/harness-store-local`). You can replace it with your own store implementation behind the `checkpointStore` SDK option.
+
+To resume a paused run from the CLI:
+
+```bash
+jami resume --json --run-id run_my_task
+```
+
+The `--json` flag emits structured output you can pipe to other tools or log to your observability system. The harness reads the last saved checkpoint, validates the `replayHash`, and continues from the point the run was paused.
+
+<Tip>
+  Run `jami inspect --json` at any time to read the latest checkpoint, pending approvals, and evidence records for a run without resuming it.
+</Tip>
+
+## State Transition Diagram
+
+```
+          ┌─────────────────────────────────────────┐
+          │               harness.run()              │
+          └───────────────────┬─────────────────────┘
+                              │
+                           [start]
+                              │
+                         [progress]
+                        ╱    │     ╲
+          [approval_required] │    [failed]
+                  │        [completed]
+          approve/deny
+                  │
+             [progress]
+            ╱         ╲
+       [completed]   [failed]
+```

@@ -1,0 +1,121 @@
+---
+title: "Checkpoints and Resume: Persist Durable Agent Run State"
+sidebarTitle: "Checkpoints"
+description: "Persist redacted agent run state with deterministic replay hashes, then resume from exactly where you left off using the SDK or CLI."
+---
+
+A checkpoint is a redacted snapshot of your run's state at the moment the run completed, paused for approval, or encountered a recoverable condition. Every checkpoint carries a deterministic `replayHash` you can use to verify that a resumed run started from the same input as the original. Sensitive fields — prompts, secrets, credentials, tokens, and private payloads — are stripped before the snapshot is written.
+
+## Default Checkpoint Stores
+
+The SDK ships with two checkpoint store implementations out of `@jami-studio/harness-store-local`:
+
+| Store | When to use |
+|---|---|
+| In-memory (default) | SDK tests and stateless scripts where you do not need cross-process persistence |
+| Filesystem (`.jami-harness/checkpoints/`) | Local development and CLI workflows where you need to resume across process restarts |
+
+The CLI automatically uses the filesystem store scoped to the `.jami-harness/` directory in your working directory.
+
+<Note>
+  Hosted durable stores — database adapters, sync layers, and multi-user control planes — are not yet available. Use the filesystem store for any workflow that requires persistence today. Hosted store adapters will implement the same checkpoint/resume/approval port shape when they land.
+</Note>
+
+## What Gets Stored
+
+Each checkpoint record contains:
+
+- **Run state**: run ID, terminal status, event references, and module output references
+- **Approval records**: every approve or deny decision tied to the run, including actor, action, scopes, and audit evidence
+- **`replayHash`**: a deterministic hash of the original run input, used to verify replay integrity
+
+The following fields are **always redacted** before persistence:
+
+- Prompts and completions
+- Secrets and credentials
+- Tokens and API keys
+- Private payloads from tool inputs or provider responses
+
+## Persisting Checkpoints
+
+To persist checkpoints across process restarts, inject the filesystem checkpoint store when you create the harness:
+
+```js
+import { createHarness } from '@jami-studio/harness-sdk';
+import { createFileSystemCheckpointStore } from '@jami-studio/harness-store-local';
+
+const checkpointStore = createFileSystemCheckpointStore();
+const harness = createHarness({ checkpointStore });
+
+const result = await harness.run({ runId: 'run_my_task' });
+
+console.log(result.checkpoint.checkpointId);
+console.log(result.checkpoint.replayHash);
+console.log(result.checkpoint.status);
+```
+
+`createFileSystemCheckpointStore()` defaults to `.jami-harness/` in the current working directory. Pass a `root` option to use a different path.
+
+## Resuming a Run
+
+Call `harness.resume(runId)` with the original run ID string to read the stored checkpoint and get its resume status. Run IDs are validated before any filesystem access — malformed IDs throw a `HarnessInputError` before any read or write occurs.
+
+```js
+import { createHarness } from '@jami-studio/harness-sdk';
+import { createFileSystemCheckpointStore } from '@jami-studio/harness-store-local';
+
+const checkpointStore = createFileSystemCheckpointStore();
+const harness = createHarness({ checkpointStore });
+
+// Initial run — checkpoint is written on completion
+const result = await harness.run({ runId: 'run_my_task' });
+console.log(result.checkpoint.checkpointId);
+console.log(result.checkpoint.replayHash);
+
+// Later — resume from the stored checkpoint
+const resumed = harness.resume('run_my_task');
+
+console.log(resumed.resumable);    // true if a resumable checkpoint exists
+console.log(resumed.reason);       // 'run_completed', 'checkpoint_not_found', etc.
+console.log(resumed.replayHash);   // must match the original run's replayHash
+```
+
+## Resuming via the CLI
+
+Use `jami resume` to read and report checkpoint state without writing a new run:
+
+```bash
+jami resume --json --run-id run_my_task
+```
+
+The command returns a JSON object with `resumable`, `reason`, `checkpointId`, `status`, and `replayHash`. A non-zero exit code indicates the run is not resumable:
+
+- **Exit 0**: checkpoint exists and is resumable
+- **Exit 2**: no resumable checkpoint (not found, or run failed)
+- **Exit 3**: run already completed (not resumable)
+
+## The replayHash
+
+The `replayHash` is a deterministic hash of the original run input. When you resume a run, compare the `replayHash` from the checkpoint against the one recorded in the original run's evidence packet. A mismatch means the resume is not starting from the same input state as the original run.
+
+<Info>
+  The `replayHash` is part of the evidence contract. Downstream systems that consume your evidence packets can use it to verify that any resumed or replayed run started from an identical input, giving you a tamper-evident chain from the original invocation through to the final evidence output.
+</Info>
+
+## Checkpoint Output Fields
+
+<ResponseField name="checkpointId" type="string">
+  A unique identifier for this checkpoint snapshot.
+</ResponseField>
+
+<ResponseField name="replayHash" type="string">
+  A deterministic hash of the original run input. Use this to verify replay integrity across resume operations.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  The run status at the time the checkpoint was written: `'completed'`, `'approval_required'`, or an error status.
+</ResponseField>
+
+<ResponseField name="redaction" type="object">
+  Metadata describing which fields were redacted before persistence. This is for audit inspection only — redacted values are not recoverable from the store.
+</ResponseField>

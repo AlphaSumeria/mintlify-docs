@@ -1,0 +1,642 @@
+---
+title: "Jami Harness CLI Command Reference and Usage Guide"
+sidebarTitle: "Commands"
+description: "Full reference for every jami CLI command: syntax, flags, realistic invocation examples, and structured JSON output shapes for scripting and CI use."
+---
+
+Each `jami` command writes structured state to `.jami-harness/` in your project root and returns a JSON object when you pass `--json`. Every command includes an `ok` boolean and a `command` field in its response. Failed or unsupported commands always include a `reason` explaining the outcome. The sections below document each command's syntax, options, and expected output.
+
+<Note>
+  Run `jami init --json` first in any new project. Most commands auto-initialise state if the config file is missing, but running `init` explicitly ensures the config is written and validates your working directory.
+</Note>
+
+## Commands
+
+<Accordion title="jami init">
+
+Create the `.jami-harness/` state directory and `harness.json` config file. The command is idempotent — running it again on an already-initialised project returns `"idempotent": true` without overwriting existing config.
+
+**Syntax**
+
+```bash
+jami init [--cwd <path>] [--json]
+```
+
+**Options**
+
+| Flag | Description |
+|---|---|
+| `--cwd <path>` | Run against a project directory other than the current working directory |
+| `--json` | Emit structured JSON output |
+
+**Example**
+
+```bash
+jami init --json
+```
+
+```json
+{
+  "ok": true,
+  "command": "init",
+  "idempotent": false,
+  "statePath": "/your/project/.jami-harness",
+  "configPath": "/your/project/.jami-harness/harness.json",
+  "next": [
+    "jami run --json",
+    "jami inspect --json"
+  ]
+}
+```
+
+When run a second time on the same project, `"idempotent"` is `true` and the existing config is preserved unchanged.
+
+</Accordion>
+
+<Accordion title="jami run">
+
+Execute the local deterministic provider workflow through the SDK, the policy-gated local tool gateway, evidence packet export, and the checkpoint store. The run writes a full evidence packet and summary under `.jami-harness/runs/<runId>/` and a redacted checkpoint under `.jami-harness/checkpoints/`.
+
+**Syntax**
+
+```bash
+jami run [--run-id <runId>] [--provider-id <id>] [--provider-failure-mode fail_once]
+         [--commit <sha>] [--ref <ref>] [--json]
+```
+
+**Options**
+
+| Flag | Description |
+|---|---|
+| `--run-id <runId>` | Custom run identifier; must match `run_[a-z0-9][a-z0-9_-]*`. Auto-generated if omitted. |
+| `--provider-id <id>` | Provider to use. Only `provider_local_deterministic` is supported; all others fail closed with exit code `2`. |
+| `--provider-failure-mode fail_once` | Simulate a recoverable provider failure before deterministic retry; records failure evidence before succeeding. |
+| `--commit <sha>` | Attach a source commit SHA as run provenance. |
+| `--ref <ref>` | Attach a source ref (e.g. `refs/heads/main`) as run provenance. |
+| `--json` | Emit structured JSON output. |
+
+**Example — successful run**
+
+```bash
+jami run --json
+```
+
+```json
+{
+  "ok": true,
+  "command": "run",
+  "runId": "run_lx7k2m",
+  "status": "completed",
+  "providerStatus": "completed",
+  "providerId": "provider_local_deterministic",
+  "toolExecutionStatuses": ["completed", "completed"],
+  "checkpointId": "chk_lx7k2m_001",
+  "replayHash": "sha256:3f8a1c...",
+  "evidencePath": "/your/project/.jami-harness/runs/run_lx7k2m/evidence.json",
+  "summaryPath": "/your/project/.jami-harness/runs/run_lx7k2m/summary.json"
+}
+```
+
+**Example — custom run ID**
+
+```bash
+jami run --json --run-id run_my_feature_test
+```
+
+**Example — unsupported provider (fails closed)**
+
+```bash
+jami run --json --provider-id provider_openai
+```
+
+```json
+{
+  "ok": false,
+  "command": "run",
+  "runId": "run_lx7k3n",
+  "status": "unsupported",
+  "reason": "provider_not_supported"
+}
+```
+
+Exit code is `2` when the provider is unsupported.
+
+**Example — simulated provider failure before retry**
+
+```bash
+jami run --json --provider-failure-mode fail_once
+```
+
+The run records a recoverable failure evidence entry and then retries with the local deterministic provider, completing successfully. The summary and evidence files contain both the failure and recovery events.
+
+</Accordion>
+
+<Accordion title="jami resume">
+
+Read a stored checkpoint for a run and report its replay status and replay hash. Use this to check whether a run is resumable before attempting recovery.
+
+**Syntax**
+
+```bash
+jami resume --run-id <runId> [--json]
+```
+
+**Options**
+
+| Flag | Description |
+|---|---|
+| `--run-id <runId>` | Required. The run identifier to inspect. Must match `run_[a-z0-9][a-z0-9_-]*`. |
+| `--json` | Emit structured JSON output. |
+
+**Example**
+
+```bash
+jami resume --json --run-id run_lx7k2m
+```
+
+```json
+{
+  "ok": false,
+  "command": "resume",
+  "runId": "run_lx7k2m",
+  "resumable": false,
+  "reason": "run_completed",
+  "checkpointId": "chk_lx7k2m_001",
+  "status": "completed",
+  "replayHash": "sha256:3f8a1c...",
+  "next": ["jami run --json --run-id run_lx7k2m"]
+}
+```
+
+Exit codes: `0` — resumable, `2` — not resumable (incomplete checkpoint), `3` — not resumable because the run already completed.
+
+</Accordion>
+
+<Accordion title="jami approve / jami deny">
+
+Record a local approval or denial decision for a specific run and action through the checkpoint store. Approval records are written to `.jami-harness/approvals/` and associated with the run checkpoint.
+
+**Syntax**
+
+```bash
+jami approve --run-id <runId> --action-id <actionId> [--actor <actorId>] [--scopes <csv>] [--json]
+jami deny   --run-id <runId> --action-id <actionId> [--actor <actorId>] [--scopes <csv>] [--json]
+```
+
+**Options**
+
+| Flag | Description |
+|---|---|
+| `--run-id <runId>` | Required. The run identifier. Must match `run_[a-z0-9][a-z0-9_-]*`. |
+| `--action-id <actionId>` | Required. The action identifier. Must match `act_[a-z0-9][a-z0-9_-]*`. Defaults to `act_local_approval` if omitted. |
+| `--actor <actorId>` | The actor recording the decision. Defaults to `actor_developer`. |
+| `--scopes <csv>` | Comma-separated list of permission scopes attached to this approval. |
+| `--json` | Emit structured JSON output. |
+
+**Example — approve**
+
+```bash
+jami approve --json --run-id run_lx7k2m --action-id act_tool_exec_001
+```
+
+```json
+{
+  "ok": true,
+  "command": "approve",
+  "runId": "run_lx7k2m",
+  "approval": {
+    "runId": "run_lx7k2m",
+    "actionId": "act_tool_exec_001",
+    "actorId": "actor_developer",
+    "status": "approved",
+    "scopes": []
+  },
+  "approvals": [
+    {
+      "actionId": "act_tool_exec_001",
+      "status": "approved"
+    }
+  ]
+}
+```
+
+**Example — deny**
+
+```bash
+jami deny --json --run-id run_lx7k2m --action-id act_tool_exec_001
+```
+
+The response shape is identical to `approve` with `"command": "deny"` and `"status": "denied"` in the approval record.
+
+</Accordion>
+
+<Accordion title="jami inspect">
+
+Report the latest run evidence, checkpoint state, approvals, and active module capabilities for your project. Optionally scope the inspection to a specific run with `--run-id`.
+
+**Syntax**
+
+```bash
+jami inspect [--run-id <runId>] [--json]
+```
+
+**Options**
+
+| Flag | Description |
+|---|---|
+| `--run-id <runId>` | Scope inspection to a specific run. Uses the latest run if omitted. |
+| `--json` | Emit structured JSON output. |
+
+**Example**
+
+```bash
+jami inspect --json
+```
+
+```json
+{
+  "ok": true,
+  "command": "inspect",
+  "statePath": "/your/project/.jami-harness",
+  "latestRun": {
+    "runId": "run_lx7k2m",
+    "status": "completed",
+    "eventCount": 12,
+    "checkpointId": "chk_lx7k2m_001",
+    "replayHash": "sha256:3f8a1c..."
+  },
+  "checkpoint": {
+    "runId": "run_lx7k2m",
+    "status": "completed",
+    "checkpointId": "chk_lx7k2m_001",
+    "replayHash": "sha256:3f8a1c..."
+  },
+  "approvals": [],
+  "harness": {
+    "modules": [
+      { "name": "runtime", "available": true },
+      { "name": "policy", "available": true }
+    ]
+  },
+  "doctor": {
+    "status": "ready_for_local_inspection",
+    "next": ["jami inspect --json", "jami resume --json --run-id run_lx7k2m", "jami map --json"],
+    "missingOptionalCapabilities": []
+  }
+}
+```
+
+</Accordion>
+
+<Accordion title="jami doctor">
+
+Run module, checkpoint, resume, and missing optional capability diagnostics for your project. `jami doctor` is your first stop when something in the harness setup looks off.
+
+**Syntax**
+
+```bash
+jami doctor [--run-id <runId>] [--json]
+```
+
+**Options**
+
+| Flag | Description |
+|---|---|
+| `--run-id <runId>` | Include checkpoint diagnostics for a specific run. |
+| `--json` | Emit structured JSON output. |
+
+**Example**
+
+```bash
+jami doctor --json
+```
+
+```json
+{
+  "ok": true,
+  "command": "doctor",
+  "statePath": "/your/project/.jami-harness",
+  "initialized": true,
+  "doctor": {
+    "status": "ready_for_local_inspection",
+    "next": ["jami inspect --json", "jami resume --json --run-id <run_id>", "jami map --json"],
+    "missingOptionalCapabilities": []
+  },
+  "harness": {
+    "modules": [
+      { "name": "runtime", "available": true },
+      { "name": "policy", "available": true },
+      { "name": "tools", "available": true },
+      { "name": "memory", "available": true },
+      { "name": "docsOutput", "available": false, "unavailableReasons": ["sdk_output_not_wired"] }
+    ]
+  },
+  "installPaths": {
+    "fullLocalHarness": { "status": "supported_local_source_checkout" }
+  }
+}
+```
+
+The `missingOptionalCapabilities` array lists every module that is not available, with the reasons it is unavailable. A non-empty list does not indicate an error — optional capabilities such as `docsOutput` are expected to be unavailable in early installs.
+
+</Accordion>
+
+<Accordion title="jami tools">
+
+Report tool adapter manifests, source-lock states, supported function and trusted MCP fixture paths, and fail-closed unavailable adapters.
+
+**Syntax**
+
+```bash
+jami tools [--json]
+```
+
+**Example**
+
+```bash
+jami tools --json
+```
+
+```json
+{
+  "ok": true,
+  "command": "tools",
+  "statePath": "/your/project/.jami-harness",
+  "modules": [
+    {
+      "name": "tools",
+      "available": true,
+      "adapters": ["function", "trusted_mcp_fixture"]
+    }
+  ],
+  "toolAdapters": [
+    { "adapterId": "function", "status": "supported" },
+    { "adapterId": "trusted_mcp_fixture", "status": "supported" },
+    { "adapterId": "openapi", "status": "fail_closed_unsupported" },
+    { "adapterId": "shell", "status": "fail_closed_unsupported" },
+    { "adapterId": "browser", "status": "fail_closed_unsupported" }
+  ],
+  "toolAdapterManifests": [...]
+}
+```
+
+Unsupported adapters appear in the manifest with `"status": "fail_closed_unsupported"`. They do not execute and do not produce tool evidence.
+
+</Accordion>
+
+<Accordion title="jami map">
+
+Report the active runtime, policy, provider, tools, memory, artifacts, observability, and docs-output capability state. `jami map` is the broadest capability snapshot — it includes tool adapter inspection and all module states.
+
+**Syntax**
+
+```bash
+jami map [--json]
+```
+
+**Example**
+
+```bash
+jami map --json
+```
+
+```json
+{
+  "ok": true,
+  "command": "map",
+  "statePath": "/your/project/.jami-harness",
+  "modules": [
+    { "name": "runtime", "available": true },
+    { "name": "policy", "available": true },
+    { "name": "tools", "available": true },
+    { "name": "memory", "available": true },
+    { "name": "context", "available": true },
+    { "name": "artifacts", "available": true },
+    { "name": "observability", "available": true },
+    { "name": "docsOutput", "available": false }
+  ],
+  "toolAdapters": [...],
+  "toolAdapterManifests": [...],
+  "controlSurfaces": [...],
+  "note": "Active module map only; local static workbench generation is available via the workbench command, and hosted control plane remains unsupported."
+}
+```
+
+</Accordion>
+
+<Accordion title="jami verify">
+
+Check local CLI state and core module availability. Returns exit code `0` on full success, `2` if the project is not initialised. Use this in CI to confirm the harness is ready before running other commands.
+
+**Syntax**
+
+```bash
+jami verify [--json]
+```
+
+**Example — passing**
+
+```bash
+jami verify --json
+```
+
+```json
+{
+  "ok": true,
+  "command": "verify",
+  "initialized": true,
+  "checks": [
+    { "name": "local state", "status": "passed", "path": "/your/project/.jami-harness/harness.json" },
+    { "name": "runtime module", "status": "passed" },
+    { "name": "policy module", "status": "passed" },
+    { "name": "full local harness install path", "status": "passed" },
+    { "name": "modular replacement path manifest", "status": "passed" }
+  ],
+  "next": ["jami run --json", "jami inspect --json"]
+}
+```
+
+**Example — not initialised**
+
+```json
+{
+  "ok": false,
+  "command": "verify",
+  "initialized": false,
+  "checks": [
+    { "name": "local state", "status": "failed", "path": "/your/project/.jami-harness/harness.json" }
+  ],
+  "next": ["jami init --json"]
+}
+```
+
+</Accordion>
+
+<Accordion title="jami memory / jami context / jami docs">
+
+Each of these commands reports capability availability and the BYO (bring-your-own) module replacement path for the corresponding harness capability.
+
+**Syntax**
+
+```bash
+jami memory  [--json]
+jami context [--json]
+jami docs    [--json]
+```
+
+**Example — memory**
+
+```bash
+jami memory --json
+```
+
+```json
+{
+  "ok": true,
+  "command": "memory",
+  "statePath": "/your/project/.jami-harness",
+  "modules": [
+    {
+      "name": "memory",
+      "available": true,
+      "byoPath": "byo_memory",
+      "sdkOption": "memory",
+      "status": "supported_port"
+    }
+  ],
+  "installPaths": { ... }
+}
+```
+
+All three commands follow the same response shape. The `docs` command reports `"status": "repo_generator_supported_sdk_output_unavailable"` because repo-level generation is supported but SDK docs-output injection is not yet wired.
+
+</Accordion>
+
+<Accordion title="jami workbench">
+
+Report local static workbench generation commands and explicitly record which hosted surfaces are unavailable.
+
+**Syntax**
+
+```bash
+jami workbench [--json]
+```
+
+**Example**
+
+```bash
+jami workbench --json
+```
+
+```json
+{
+  "ok": true,
+  "command": "workbench",
+  "status": "local_static_available",
+  "stateRoot": "/your/project/.jami-harness",
+  "unavailable": [
+    { "surface": "hosted workbench/control", "status": "fail_closed_unsupported" },
+    { "surface": "hosted stores", "status": "fail_closed_unsupported" },
+    { "surface": "Studio UI package integration", "status": "not_claimed" }
+  ]
+}
+```
+
+<Note>
+  The hosted workbench, hosted stores, and Studio UI package integration are explicitly unavailable and fail closed. `jami workbench --json` records these gaps for observability; no external API is called.
+</Note>
+
+</Accordion>
+
+<Accordion title="jami release">
+
+Report the non-publishing release audit surface and the status of release-related capabilities. This command does **not** publish packages, create tags, deploy anything, or call external account APIs.
+
+**Syntax**
+
+```bash
+jami release [--json]
+```
+
+**Example**
+
+```bash
+jami release --json
+```
+
+```json
+{
+  "ok": true,
+  "command": "release",
+  "status": "public_release_evidence_available_hosted_runtime_unsupported",
+  "manifestPath": "docs/generated/release-capability-manifest.json",
+  "unsupported": [
+    { "surface": "hosted docs deployment", "status": "fail_closed_unsupported" },
+    { "surface": "hosted provider runtime", "status": "fail_closed_unsupported" }
+  ],
+  "unavailable": [
+    "hosted docs/workbench deployment",
+    "hosted provider runtime",
+    "hosted durable stores",
+    "hosted observability sinks"
+  ],
+  "failClosed": true
+}
+```
+
+<Note>
+  `jami release` is a read-only release audit command. It does not publish packages, create tags, deploy docs, or call any external API. Hosted provider runtime, durable stores, and observability sinks remain fail-closed.
+</Note>
+
+</Accordion>
+
+<Accordion title="Unsupported commands (fail-closed)">
+
+`jami cancel`, `jami retry`, and `jami migration` are explicitly fail-closed command surfaces. They return structured JSON with `"failClosed": true` and always exit with code `2`. No run state is read or written.
+
+**Example — cancel**
+
+```bash
+jami cancel --json --run-id run_lx7k2m
+```
+
+```json
+{
+  "ok": false,
+  "command": "cancel",
+  "runId": "run_lx7k2m",
+  "status": "unsupported",
+  "failClosed": true,
+  "reason": "runtime_cancellation_not_implemented",
+  "unavailableSurface": "runtime cancellation orchestration",
+  "next": [
+    "jami inspect --json --run-id run_lx7k2m",
+    "jami doctor --json --run-id run_lx7k2m"
+  ]
+}
+```
+
+**Example — retry**
+
+```bash
+jami retry --json --run-id run_lx7k2m
+```
+
+```json
+{
+  "ok": false,
+  "command": "retry",
+  "runId": "run_lx7k2m",
+  "status": "unsupported",
+  "failClosed": true,
+  "reason": "manual_retry_command_not_implemented",
+  "unavailableSurface": "manual retry orchestration",
+  "next": [
+    "jami run --json --provider-failure-mode fail_once"
+  ]
+}
+```
+
+Use `jami run --provider-failure-mode fail_once` to test recovery behaviour today. Use `jami inspect` and `jami doctor` to examine run state while cancellation and migration surfaces are unavailable.
+
+</Accordion>

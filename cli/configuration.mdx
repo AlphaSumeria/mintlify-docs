@@ -1,0 +1,202 @@
+---
+title: "Jami Harness CLI Configuration: Flags, State, and Env Vars"
+sidebarTitle: "Configuration"
+description: "Configure the jami CLI with harness.json, per-command flags, run IDs, provider settings, source provenance, exit codes, and environment variables."
+---
+
+The Jami Harness CLI stores all project state in a single `.jami-harness/` directory and reads configuration entirely from that directory and the flags you pass at the command line. There is no global config file, no user-level config, and no hidden environment bootstrapping — every setting is explicit. This page covers the state directory layout, the `harness.json` config file, per-command flags, exit codes, and the environment variables used by the hosted provider adapter (which currently fails closed).
+
+## The `.jami-harness/` State Directory
+
+Run `jami init` once in your project root to create the state directory and write the default `harness.json` config. The directory is created at `<cwd>/.jami-harness/` — relative to your project root or to the path you pass via `--cwd`.
+
+```bash
+jami init --json
+```
+
+```json
+{
+  "ok": true,
+  "command": "init",
+  "idempotent": false,
+  "statePath": "/your/project/.jami-harness",
+  "configPath": "/your/project/.jami-harness/harness.json",
+  "next": ["jami run --json", "jami inspect --json"]
+}
+```
+
+Add `.jami-harness/` to your `.gitignore` if you do not want run evidence and checkpoints committed to version control. The directory is safe to delete — re-run `jami init` to recreate it.
+
+## harness.json
+
+`harness.json` is written by `jami init` at `.jami-harness/harness.json`. It records the schema version, project name, and default module bindings. You can edit it by hand; the CLI reads it on every command invocation.
+
+**Default shape**
+
+```json
+{
+  "schemaVersion": "2026-06-09",
+  "project": "jami-harness-local",
+  "modules": {
+    "runtime": "default",
+    "policy": "default",
+    "artifacts": "memory",
+    "observability": "local",
+    "memory": "memory"
+  }
+}
+```
+
+The `modules` object maps each harness capability slot to its default implementation. Replace any value with a BYO module identifier when you inject your own memory, observability, or artifact store implementation via the SDK.
+
+<Note>
+  `jami init` is idempotent. Running it again on an already-configured project returns `"idempotent": true` and does not overwrite your existing `harness.json`.
+</Note>
+
+## Global Flags
+
+These flags are accepted by every `jami` command.
+
+### `--json`
+
+Emit structured JSON to stdout instead of human-readable text. Use this in scripts and CI pipelines. All JSON responses include `"ok"` (boolean) and `"command"` (string) at the top level.
+
+```bash
+jami inspect --json
+jami verify --json
+jami doctor --json
+```
+
+### `--cwd <path>`
+
+Run the command against a project directory other than the current working directory. The CLI resolves the `.jami-harness/` state dir relative to the path you provide.
+
+```bash
+jami init --cwd /path/to/my-project --json
+jami run  --cwd /path/to/my-project --json
+```
+
+## Run Identification
+
+### `--run-id <runId>`
+
+Specify a custom identifier for a run. If omitted, the CLI generates one automatically from the current timestamp in base-36.
+
+**Format requirement:** run IDs must match the pattern `run_[a-z0-9][a-z0-9_-]*`.
+
+```bash
+jami run --json --run-id run_my_feature_smoke
+jami resume --json --run-id run_my_feature_smoke
+jami inspect --json --run-id run_my_feature_smoke
+```
+
+<Note>
+  Malformed run IDs are rejected before the CLI reads or writes any filesystem state. You receive a structured JSON error with `"code": "invalid_identifier"` and exit code `64` without any partial writes.
+</Note>
+
+Valid examples:
+
+```
+run_abc123
+run_my-feature-test
+run_lx7k2m
+```
+
+Invalid examples (rejected immediately):
+
+```
+my-run            # missing run_ prefix
+run_             # empty suffix
+RUN_abc123       # uppercase not allowed
+run_ABC          # uppercase not allowed
+```
+
+## Provider Options
+
+### `--provider-id <id>`
+
+Set the provider for a run. Today only `provider_local_deterministic` is fully supported. All other provider IDs fail closed with exit code `2` and no API call is made.
+
+```bash
+# Supported — runs the local deterministic workflow
+jami run --json --provider-id provider_local_deterministic
+
+# Fails closed — no external API is called
+jami run --json --provider-id provider_openai
+```
+
+```json
+{
+  "ok": false,
+  "command": "run",
+  "status": "unsupported",
+  "reason": "provider_not_supported"
+}
+```
+
+### `--provider-failure-mode fail_once`
+
+Simulate a recoverable provider failure before the CLI retries with the local deterministic provider. Use this to verify that your run setup correctly records failure evidence and succeeds on retry. The resulting evidence packet contains both the failure and recovery events.
+
+```bash
+jami run --json --provider-failure-mode fail_once
+```
+
+## Source Provenance
+
+### `--commit <sha>`
+
+Attach a source commit SHA to the run as provenance metadata. Recorded in the evidence packet.
+
+```bash
+jami run --json --commit abc123def456
+```
+
+### `--ref <ref>`
+
+Attach a source ref (branch or tag) to the run as provenance metadata.
+
+```bash
+jami run --json --ref refs/heads/main
+```
+
+You can combine both flags to produce fully traceable evidence:
+
+```bash
+jami run --json \
+  --run-id run_ci_smoke \
+  --commit "$(git rev-parse HEAD)" \
+  --ref "$(git symbolic-ref HEAD)"
+```
+
+## Exit Codes
+
+All `jami` commands exit with one of the following codes:
+
+| Exit code | Meaning |
+|---|---|
+| `0` | Success |
+| `1` | Runtime error (unexpected failure, SDK exception) |
+| `2` | Unsupported provider, adapter, or command (fail-closed) |
+| `3` | Not resumable because the run already completed (`jami resume` only) |
+| `64` | Input validation or store error — malformed run ID, action ID, unknown command, or a `HarnessStoreError` |
+
+<Note>
+  Exit code `64` is always accompanied by a structured JSON error on stderr. The `"code"` field will be `"invalid_identifier"`, `"unknown_command"`, or another structured error code surfaced by a `HarnessStoreError`. No partial writes occur when this code is returned.
+</Note>
+
+## Environment Variables
+
+The following environment variables are read by the hosted OpenAI provider adapter. The adapter is currently **fail-closed** — setting these variables does not enable the hosted provider today.
+
+<Warning>
+  The OpenAI hosted provider adapter is not available. Setting these variables has no effect at runtime. Any run with `--provider-id provider_openai` exits with code `2` and `"status": "unsupported"` regardless of whether these variables are set.
+</Warning>
+
+| Variable | Purpose |
+|---|---|
+| `JAMI_HARNESS_OPENAI_API_KEY` | API key for the OpenAI provider adapter |
+| `JAMI_HARNESS_OPENAI_MODEL` | Model name to request from the OpenAI API |
+| `JAMI_HARNESS_OPENAI_BASE_URL` | Override the OpenAI API base URL (for proxies or compatible endpoints) |
+
+These variables are documented here so you can understand the intended configuration surface when the hosted provider adapter becomes available. They are read by the adapter layer, not by the CLI itself.

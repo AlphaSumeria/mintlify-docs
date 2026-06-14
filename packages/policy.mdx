@@ -1,0 +1,146 @@
+---
+title: "Harness Policy Engine: Default-Deny Action Runtime"
+sidebarTitle: "Policy Engine"
+description: "Use @jami-studio/harness-policy to evaluate every agent action with default-deny rules covering scopes, injection signals, approvals, and secret safety."
+---
+
+`@jami-studio/harness-policy` provides the default-deny policy runtime that governs every action in Jami Harness. Before any tool runs or any agent action executes, the policy engine evaluates a structured request — checking actor scopes, approval bindings, transport safety signals, and secret reference usage — and returns a typed decision plus audit evidence. The engine does not render UI and does not execute tools; it evaluates and decides.
+
+## Installation
+
+```bash
+npm install @jami-studio/harness-policy
+```
+
+**Package:** `@jami-studio/harness-policy` · **Version:** `0.1.0`
+
+## Exported API
+
+The policy engine port is intentionally small. It exposes three exports:
+
+<CardGroup cols={3}>
+  <Card title="evaluate(request)" icon="scale-balanced">
+    Evaluates a structured action request and returns `allow`, `deny`, `needs_approval`, or `needs_owner`.
+  </Card>
+  <Card title="createDefaultPolicyEngine(options)" icon="gear">
+    Instantiates the built-in rules-based default engine. Pass options to tune scope lists and approval bindings.
+  </Card>
+  <Card title="createPolicyGatedRunKernel(options)" icon="shield-check">
+    A minimal runtime helper that gates a proposed run action before a downstream tool or runtime package executes it.
+  </Card>
+</CardGroup>
+
+## Basic Usage
+
+Create the default engine and evaluate an action request. The decision object carries the outcome and the audit evidence the runtime records for every non-allow result:
+
+```js
+import { createDefaultPolicyEngine } from '@jami-studio/harness-policy';
+
+const policyEngine = createDefaultPolicyEngine();
+
+const decision = await policyEngine.evaluate({
+  actionId: 'action_send_email',
+  actorId: 'agent_writer',
+  scopes: ['email:send'],
+  runId: 'run_draft_campaign',
+});
+
+console.log(decision.outcome);
+// 'allow' | 'deny' | 'needs_approval' | 'needs_owner'
+```
+
+### Gating a run before tool execution
+
+Use `createPolicyGatedRunKernel` when you want the policy check wired directly into your run lifecycle, before the tools package receives the call:
+
+```js
+import {
+  createDefaultPolicyEngine,
+  createPolicyGatedRunKernel,
+} from '@jami-studio/harness-policy';
+
+const policyEngine = createDefaultPolicyEngine();
+
+const kernel = createPolicyGatedRunKernel({ policyEngine });
+
+const result = await kernel.gate({
+  actionId: 'action_publish_post',
+  actorId: 'agent_publisher',
+  scopes: ['content:publish'],
+  runId: 'run_publish_weekly',
+});
+
+if (result.outcome !== 'allow') {
+  console.log('Run blocked:', result.outcome, result.auditRef);
+}
+```
+
+## When the Default Engine Denies
+
+The default engine fails closed — it denies any request that matches one of the following conditions:
+
+<Accordion title="Deny conditions">
+
+| Condition | Outcome |
+|---|---|
+| Missing or insufficient scopes | `deny` |
+| Prompt injection signals detected in request | `deny` |
+| Tool metadata poisoning detected | `deny` |
+| Unsafe MCP transport controls present | `deny` |
+| Secret value leakage in action request payload | `deny` |
+| Approval token replay detected | `deny` |
+| Approval record expired | `deny` |
+| Actor, action, or scope mismatch | `deny` |
+| Action requires elevated approval not yet granted | `needs_approval` |
+| Action requires owner-level authorization | `needs_owner` |
+
+</Accordion>
+
+<Warning>
+  A custom policy engine must never weaken default-deny semantics or omit audit evidence generation. Replacing the engine with one that returns `allow` unconditionally — or that skips audit evidence on non-allow outcomes — violates the harness contract and will fail fixture validation.
+</Warning>
+
+## Audit Evidence on Every Non-Allow Outcome
+
+Every non-allow decision automatically produces an `auditEvent` record tied to the decision. You do not need to instrument this yourself — the policy engine generates audit evidence as part of every `deny`, `needs_approval`, and `needs_owner` response.
+
+```js
+const decision = await policyEngine.evaluate({ /* ... */ });
+
+if (decision.outcome !== 'allow') {
+  // decision.auditRef points to the generated auditEvent record
+  console.log('Audit reference:', decision.auditRef);
+}
+```
+
+## Bring Your Own Policy Engine
+
+If the default rules don't fit your requirements, inject a custom implementation via `createHarness`. Your engine must implement the same port interface — accepting a structured request and returning a typed decision with audit evidence:
+
+```js
+import { createHarness } from '@jami-studio/harness-sdk';
+
+const myPolicyEngine = {
+  async evaluate(request) {
+    // Your custom logic here — must return audit evidence on non-allow outcomes
+    return {
+      outcome: 'allow',
+      auditRef: null,
+    };
+  },
+};
+
+const harness = createHarness({
+  policyEngine: myPolicyEngine,
+});
+```
+
+<Note>
+  Even with a custom engine, the harness contracts validation gate will still check that non-allow decisions carry audit evidence references. Build your engine to satisfy the `policyDecision` schema anchor in `@jami-studio/harness-contracts`.
+</Note>
+
+## Further Reading
+
+- [`@jami-studio/harness-contracts`](/packages/contracts) — the `policyDecision`, `approvalRequest`, and `auditEvent` schema anchors your engine must satisfy
+- [`@jami-studio/harness-tools`](/packages/tools) — tool execution is gated by the policy engine before any handler runs

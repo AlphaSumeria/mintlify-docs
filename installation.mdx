@@ -1,0 +1,115 @@
+---
+title: "Install Jami Harness SDK, CLI, and Capability Packages"
+sidebarTitle: "Installation"
+description: "Install Jami Harness via npm, pnpm, or yarn, or check out the full local source. Covers Node.js requirements, all available packages, and verification."
+---
+
+Jami Harness publishes focused packages under the `@jami-studio` scope. You can install only what you need — most projects start with the SDK and CLI — or pull in individual capability packages for fine-grained control. This page covers requirements, every available package, installation options, and how to verify a working installation.
+
+## Requirements
+
+| Requirement | Minimum version |
+|---|---|
+| Node.js | `>=24.0.0` |
+| pnpm | `>=10.0.0` |
+
+<Note>
+  Node.js 24 or later is required because the harness uses native ESM (`import`/`export`) throughout, including in the CLI binary. The pnpm version requirement applies when working from a source checkout of the repository. When installing published packages, npm and yarn work fine with no pnpm version constraint.
+</Note>
+
+## Installation options
+
+### Install published packages (recommended)
+
+Install the packages you need directly from the npm registry:
+
+<CodeGroup>
+  ```bash npm
+  npm install @jami-studio/harness-sdk @jami-studio/harness-cli
+  ```
+
+  ```bash pnpm
+  pnpm add @jami-studio/harness-sdk @jami-studio/harness-cli
+  ```
+
+  ```bash yarn
+  yarn add @jami-studio/harness-sdk @jami-studio/harness-cli
+  ```
+</CodeGroup>
+
+For most projects, `@jami-studio/harness-sdk` and `@jami-studio/harness-cli` are the only packages you need to install directly. The SDK pulls in `@jami-studio/harness-core`, `@jami-studio/harness-runtime`, and `@jami-studio/harness-artifacts` as dependencies automatically.
+
+### Install from source checkout
+
+If you want the complete current foundation — all packages, generated docs, workbench, eval smoke, and verification scripts — clone the repo and install with the frozen lockfile:
+
+```bash
+git clone https://github.com/studio-jami/jami-harness.git
+cd jami-harness
+pnpm install --frozen-lockfile
+```
+
+Then run the CLI directly from source:
+
+```bash
+node apps/cli/src/cli.mjs init --json
+node apps/cli/src/cli.mjs run --json
+node apps/cli/src/cli.mjs inspect --json
+```
+
+## Available packages
+
+All packages are published under the `@jami-studio` scope at version `0.1.x`.
+
+| Package | Description | Typical use |
+|---|---|---|
+| `@jami-studio/harness-sdk` | Top-level developer API: `createHarness()`, run, resume, approve, and module injection | All projects using the SDK |
+| `@jami-studio/harness-cli` | `jami` CLI binary: init, run, inspect, approve, deny, resume, doctor, verify, and more | Projects using the CLI |
+| `@jami-studio/harness-contracts` | Shared contracts, JSON Schema anchors, and compatibility fixtures for all harness packages | When you need to type-check against harness contracts |
+| `@jami-studio/harness-core` | Core composition layer for runtime, policy, tools, memory, context, artifacts, observability, and all adapter ports | Pulled in automatically by the SDK |
+| `@jami-studio/harness-policy` | Policy engine, approval workflows, identity, secret-reference handling, and audit runtime spine | When you need to extend or replace the policy layer |
+| `@jami-studio/harness-tools` | Tool registry, execution envelope, adapter manifests, and policy-gated function tool gateway | When you need direct access to tool registration and execution |
+| `@jami-studio/harness-memory` | Memory, search, citation, permission filtering, and context replay foundations | When you need direct memory or context module access |
+| `@jami-studio/harness-artifacts` | Artifact provenance records and replaceable storage port defaults | When you need direct artifact store access |
+| `@jami-studio/harness-observability` | Trace, audit, and evidence packet export foundations | When you need direct observability sink access |
+| `@jami-studio/harness-runtime` | Dependency-light run lifecycle and policy-gated emission kernel | Advanced use cases requiring direct runtime access |
+| `@jami-studio/harness-store-local` | Local filesystem checkpoint store ports for runtime state and replay | Pulled in by the CLI; use directly for custom checkpoint storage |
+| `@jami-studio/harness-provider-local` | Local deterministic provider adapter for harness workflow execution | When building or testing against the local provider |
+| `@jami-studio/harness-docs` | Deterministic docs, changelog, system-map, and evidence-index generator | When generating docs and evidence indexes from a source checkout |
+| `@jami-studio/harness-workbench` | Dependency-free local static workbench for runtime evidence, docs previews, and system maps | When generating or viewing the local workbench from a source checkout |
+
+## Verify your installation
+
+After installing, confirm the CLI is working and core modules are available:
+
+```bash
+jami verify --json
+```
+
+This checks local CLI state, core module availability, and the generated full-local and modular replacement path manifest. It exits with code `0` on success and a non-zero code if any required module is missing.
+
+For a detailed diagnostics report — including missing optional capabilities, checkpoint state, and resume availability — run:
+
+```bash
+jami doctor --json
+```
+
+`jami doctor` reports module status, checkpoint health, resume readiness, and any optional capability gaps without making changes to your project state.
+
+<Note>
+  **Version 0.1.x — what's available today**
+
+  The current release provides a complete local foundation: the local deterministic provider, policy-gated function tools and trusted MCP fixtures, in-memory and filesystem checkpoint stores, artifact records, trace events, and structured evidence packets.
+
+  The following surfaces are not yet available in 0.1.x and fail closed with structured JSON errors when requested:
+  - Hosted model providers (OpenAI, Anthropic, Google, xAI, Azure OpenAI, Bedrock, and others)
+  - Hosted checkpoint stores and hosted object storage
+  - Hosted observability and external eval backends
+  - Hosted workbench and Studio UI package integration
+  - Executable OpenAPI, shell, browser, code, provider-as-tool, A2A, stdio MCP, and remote MCP tool adapters
+  - Runtime cancellation orchestration and manual retry orchestration
+  - Checkpoint and store migration tooling
+  - SDK-level docs-output injection and hosted docs publishing
+
+  These surfaces will be added in future releases. Each will be verified and documented before any external API is called.
+</Note>

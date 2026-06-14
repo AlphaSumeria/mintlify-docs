@@ -1,0 +1,114 @@
+---
+title: "Jami Harness CLI: Agent-First Local Command Surface"
+sidebarTitle: "CLI Overview"
+description: "Get the jami binary to init state, execute governed runs, inspect evidence, manage approvals, and audit capabilities without calling external APIs."
+---
+
+The Jami Harness CLI (`@jami-studio/harness-cli`) is the primary local command surface for working with the harness runtime. Install it once to get the `jami` binary, then use it to initialise project state, execute policy-gated runs, inspect evidence packets, record approvals, and audit the full capability map — entirely on your local machine. The CLI writes structured state to a `.jami-harness/` directory in your project root and never publishes externally or calls hosted APIs unless you explicitly configure a hosted provider (which currently fails closed — see the note below).
+
+## Installation
+
+Install `@jami-studio/harness-cli` from npm:
+
+```bash
+npm install --save-dev @jami-studio/harness-cli
+# or
+pnpm add -D @jami-studio/harness-cli
+```
+
+After installation the `jami` binary is available in your project's `node_modules/.bin/` path. Run it directly via your package manager:
+
+```bash
+pnpm jami --help
+npx jami --help
+```
+
+## Commands at a Glance
+
+Every command accepts `--json` for machine-readable structured output. The table below summarises all available commands.
+
+| Command | Purpose |
+|---|---|
+| `jami init` | Create `.jami-harness/` state and `harness.json` config idempotently |
+| `jami run` | Execute the local deterministic provider workflow and write evidence |
+| `jami resume` | Read a stored checkpoint and report replay/resume status |
+| `jami approve` | Record a local approval decision for a run and action |
+| `jami deny` | Record a local denial decision for a run and action |
+| `jami inspect` | Show latest run evidence plus active module capabilities |
+| `jami doctor` | Show module, checkpoint, resume, and missing capability diagnostics |
+| `jami tools` | Show tool adapter manifests, source-lock states, and adapter gaps |
+| `jami memory` | Show memory module capability availability and BYO paths |
+| `jami context` | Show context assembly capability availability and BYO paths |
+| `jami docs` | Show docs-output capability availability and BYO paths |
+| `jami map` | Show all active module capabilities including tool adapter inspection |
+| `jami workbench` | Show local static workbench generation commands and hosted gaps |
+| `jami release` | Show non-publishing release audit status and fail-closed gaps |
+| `jami verify` | Check local CLI state and core module availability |
+
+<Note>
+  `jami cancel`, `jami retry`, and `jami migration` are explicitly fail-closed. They return structured JSON with `"failClosed": true` and exit code `2` until runtime cancellation, manual retry orchestration, and checkpoint migration surfaces exist with source-lock evidence.
+</Note>
+
+## State Directory Layout
+
+Running `jami init` creates a `.jami-harness/` directory in your project root (or in `--cwd <path>` if specified). All CLI state lives inside this directory — nothing is written outside it.
+
+```
+.jami-harness/
+├── harness.json                          # Project config (created by jami init)
+├── runs/
+│   └── <runId>/
+│       ├── evidence.json                 # Full structured run evidence packet
+│       └── summary.json                  # Lightweight run summary
+├── checkpoints/
+│   └── <runId>.json                      # Redacted run checkpoint for resume/replay
+└── approvals/
+    └── <runId>/                          # Local approval and denial records
+```
+
+### What each file contains
+
+<CardGroup cols={2}>
+  <Card title="harness.json" icon="gear">
+    Project-level configuration written by `jami init`. Records schema version, project name, and default module bindings (runtime, policy, artifacts, observability, memory).
+  </Card>
+  <Card title="runs/<runId>/evidence.json" icon="file-lines">
+    The full structured evidence packet for a run: events, traces, audits, tool executions, provider result, and artifact references.
+  </Card>
+  <Card title="runs/<runId>/summary.json" icon="list-check">
+    A lightweight run summary with status, event counts, checkpoint ID, replay hash, and provider/tool outcome references. Faster to read than the full evidence packet.
+  </Card>
+  <Card title="checkpoints/<runId>.json" icon="clock-rotate-left">
+    A redacted checkpoint written after each run. Used by `jami resume` to report replay status and by `jami approve`/`jami deny` to record approval evidence.
+  </Card>
+</CardGroup>
+
+## Structured JSON Output
+
+Every command supports the `--json` flag. When `--json` is present, the CLI writes a structured JSON object to stdout instead of human-readable text. Use this flag in scripts, CI pipelines, and any tooling that parses CLI output.
+
+```bash
+jami verify --json
+```
+
+```json
+{
+  "ok": true,
+  "command": "verify",
+  "initialized": true,
+  "checks": [
+    { "name": "local state", "status": "passed" },
+    { "name": "runtime module", "status": "passed" },
+    { "name": "policy module", "status": "passed" },
+    { "name": "full local harness install path", "status": "passed" },
+    { "name": "modular replacement path manifest", "status": "passed" }
+  ],
+  "next": ["jami run --json", "jami inspect --json"]
+}
+```
+
+All JSON responses include an `ok` boolean and a `command` field. Failed or unsupported commands always include a `reason` field explaining the failure.
+
+<Note>
+  The CLI does **not** publish packages, deploy docs, tag releases, or call any hosted API. `jami release` is a read-only release audit surface. Hosted providers, hosted stores, and hosted observability remain fail-closed until those surfaces exist with source-lock evidence.
+</Note>

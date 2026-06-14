@@ -1,0 +1,184 @@
+---
+title: "Artifacts and Evidence: Trustworthy Jami Harness Output"
+sidebarTitle: "Artifacts & Evidence"
+description: "Learn how Jami Harness binds agent output to run identity, source commits, and evidence packets to produce an auditable, tamper-evident provenance chain."
+---
+
+When an agent produces output — a document, a summary, a changelog entry, a system map — you need to trust it. Jami Harness makes that trust explicit by binding every piece of output to its **artifact record** (provenance), its **evidence packet** (the chain of commands and contracts that justify the output), and the run and source commit that produced it. Nothing is published anonymously.
+
+## What an Artifact Is
+
+An **artifact** is any durable output from an agent run. It might be a generated document, an evidence export, a system map, or a metric summary. Every artifact is created with:
+
+- The `runId` that produced it
+- The `sourceRepo`, `sourceCommit`, and `sourceRef` the run was operating on
+- An `evidenceRef` pointing to the evidence packet that justifies it
+- A `traceRef` linking to the trace span that covers its creation
+- One or more `auditRefs` referencing the audit events for all policy decisions during its creation
+- A **`promotionState`** (`draft`, `reviewed`, etc.) tracking where it is in your workflow
+- A **`redaction`** block specifying classification and which fields (if any) are omitted
+
+Secret-adjacent payload is **omitted and redacted by default**. You never need to scrub artifacts manually before sharing them.
+
+### artifactRecord shape
+
+```json
+{
+  "artifactId": "art_my_task_evidence",
+  "kind": "evidence",
+  "title": "Run evidence packet",
+  "promotionState": "draft",
+  "provenance": {
+    "runId": "run_my_task",
+    "sourceRepo": "my-repo",
+    "sourceCommit": "abc123",
+    "sourceRef": "refs/heads/main",
+    "evidenceRef": "ev_my_task",
+    "createdAt": "2026-06-09T12:00:00.000Z",
+    "traceRef": "trc_my_task",
+    "auditRefs": ["aud_my_task"]
+  },
+  "storage": {
+    "mode": "memory",
+    "locator": "memory://art_my_task",
+    "contentHash": "sha256:..."
+  },
+  "redaction": {
+    "classification": "internal",
+    "privatePayloadPolicy": "redacted",
+    "redactedFields": []
+  }
+}
+```
+
+## artifactView: Safe Display Projection
+
+An **`artifactView`** is a read-only projection of artifact metadata designed for display. It carries the `artifactId`, `kind`, `title`, `promotionState`, `availabilityState`, provenance references, and a list of supported renderers — but it **never exposes the artifact payload**. UI components render `artifactView` data; they do not read artifact storage directly.
+
+Availability states let renderers gracefully handle every condition:
+
+| State | Meaning |
+|---|---|
+| `docs` / `evidence` / `system_map` / etc. | Normal displayable artifact |
+| `redacted_artifact` | Artifact exists but payload is withheld |
+| `denied_artifact` | Artifact access was blocked by policy |
+| `stale_artifact` | Artifact exists but its source has since changed |
+| `missing_artifact` | Referenced artifact could not be found |
+| `unsupported_kind` | Renderer does not support this artifact type |
+
+## Evidence Packets
+
+An **evidence packet** is the machine-readable justification for a generated claim. It answers: what source did this come from, what command produced it, what contracts does it satisfy, and how fresh is it?
+
+Evidence packets are the connective tissue between artifacts and the source tree. Every evidence packet contains:
+
+- **`source`** — repo, commit, ref, and timestamp
+- **`commands`** — the commands run and their pass/fail status
+- **`artifacts`** — references to the outputs produced
+- **`acceptedContracts`** — the schema contracts the output satisfies
+- **`freshnessClass`** — how current the evidence is
+- **`redaction`** — whether the packet contains secrets or private payloads
+
+### Freshness Classes
+
+| Class | Meaning |
+|---|---|
+| `deterministic_current_source_tree` | Output was produced deterministically from the current source tree in this run |
+| `current_run` | Output was produced during this run but may depend on external state |
+
+### Reading Evidence from a Run Result
+
+```js
+const result = await harness.run({
+  runId: 'run_example',
+  sourceRepo: 'my-repo',
+  sourceCommit: 'abc123',
+  sourceRef: 'refs/heads/main',
+});
+
+console.log(result.evidence.evidenceId);       // 'ev_example'
+console.log(result.evidence.sourceRepo);       // 'my-repo'
+console.log(result.evidence.commandResult);    // 'passed' | 'failed'
+```
+
+The evidence packet on the result gives you the top-level justification for everything the run produced. From it you can trace forward to individual artifact records and backward to the source commit.
+
+## How Evidence Ties Claims to Source
+
+Every document, claim, or output that your agent generates links to:
+
+1. **A source record** — the repo, commit, and ref the agent was operating on
+2. **A command record** — the specific operation that produced the output, and whether it passed or failed
+3. **Accepted contracts** — the schema contracts the output satisfies, by name and version
+
+This chain means you can always answer "where did this come from?" and "was it valid when it was created?" without re-running the agent.
+
+```json
+{
+  "evidenceId": "ev_run_example",
+  "subject": "Agent run output generation and validation",
+  "freshnessClass": "current_run",
+  "source": {
+    "repo": "my-repo",
+    "commit": "abc123",
+    "ref": "refs/heads/main",
+    "recordedAt": "2026-06-09T12:00:00.000Z"
+  },
+  "commands": [
+    {
+      "command": "jami inspect --json",
+      "status": "passed",
+      "recordedAt": "2026-06-09T12:00:00.000Z"
+    }
+  ],
+  "acceptedContracts": [
+    { "name": "evidencePacket", "version": "2026-06-09" }
+  ]
+}
+```
+
+## Bringing Your Own Artifact Store
+
+Replace the default in-memory artifact store with your own storage implementation using the `artifactStore` SDK option. Your store must preserve the provenance contract — specifically the `artifactRecord` shape, `artifactView` projection, and evidence references.
+
+```js
+import { createHarness } from '@jami-studio/harness-sdk';
+import myArtifactStore from './my-artifact-store';
+
+const harness = createHarness({ artifactStore: myArtifactStore });
+```
+
+<Info>
+  Filesystem, object storage (S3, GCS, etc.), and hosted artifact stores are not implemented today. The default storage mode is **in-memory**. Use the `artifactStore` port to wire in your own durable backend while the harness-owned hosted path is being built.
+</Info>
+
+## Local Observability: Metrics and Traces
+
+The `@jami-studio/harness-observability` package captures local metrics alongside every run. Each **`metricRecord`** records a named measurement (latency, token estimate, tool-call count, or external-billable-cost estimate) tied to the run and trace span that produced it. Sensitive dimensions are redacted before the record is stored.
+
+```json
+{
+  "metricId": "met_tool_latency",
+  "runId": "run_my_task",
+  "name": "tool.latency_ms",
+  "kind": "latency",
+  "value": 12,
+  "unit": "ms",
+  "dimensions": {
+    "toolId": "tool_greet",
+    "adapterId": "adapter_function",
+    "status": "completed"
+  }
+}
+```
+
+**`traceEvent`** records capture span start/end times, status, run event references, artifact references, and audit references — all with redacted payload attributes. No OpenTelemetry export, hosted sinks, or external eval backends are wired up by default; the observability port is replaceable if you need to forward to your own system.
+
+## Inspecting Artifacts and Evidence from the CLI
+
+```bash
+# Read the latest evidence, checkpoints, and pending approvals
+jami inspect --json
+```
+
+`jami inspect` gives you a single structured JSON output covering the most recent evidence packet, any persisted checkpoints, and any pending approval requests for the current run. It is safe to run at any time — it reads local state only and never triggers re-execution.

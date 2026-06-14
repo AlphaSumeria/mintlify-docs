@@ -1,0 +1,124 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "Jami Harness",
+  "projectDescription": "A provider-agnostic agent SDK and governed action runtime for building, running, inspecting, and governing AI agents with clear contracts, policy controls, and durable artifact trails.",
+  "theme": "luma",
+  "primaryColor": "#2563eb",
+  "lightColor": "#3b82f6",
+  "darkColor": "#1d4ed8",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/run-lifecycle",
+              "concepts/policy-governance",
+              "concepts/tools-adapters",
+              "concepts/memory-context",
+              "concepts/artifacts-evidence"
+            ]
+          },
+          {
+            "group": "CLI",
+            "pages": [
+              "cli/overview",
+              "cli/commands",
+              "cli/configuration"
+            ]
+          },
+          {
+            "group": "SDK",
+            "pages": [
+              "sdk/overview",
+              "sdk/module-injection",
+              "sdk/checkpoint-resume",
+              "sdk/approvals"
+            ]
+          },
+          {
+            "group": "Packages",
+            "pages": [
+              "packages/contracts",
+              "packages/policy",
+              "packages/tools",
+              "packages/observability",
+              "packages/memory"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Reference",
+        "groups": [
+          {
+            "group": "Contract Schemas",
+            "pages": [
+              "reference/run-event",
+              "reference/tool-execution",
+              "reference/policy-decision",
+              "reference/artifact-record",
+              "reference/evidence-packet"
+            ]
+          },
+          {
+            "group": "Resources",
+            "pages": [
+              "reference/changelog",
+              "reference/faq"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Provider-agnostic agent run lifecycle with structured checkpointing and resume",
+    "Default-deny policy engine with approval workflows, audit events, and redaction",
+    "Policy-gated tool registry supporting function tools and trusted MCP fixtures",
+    "Replaceable BYO module ports for memory, context, search, store, provider, and observability",
+    "Deterministic local provider for dev and testing without external API calls",
+    "Evidence packets tying every generated artifact to its source, command, and freshness class",
+    "Agent-first CLI (`jami`) for init, run, resume, approve, inspect, doctor, and verify",
+    "JSON Schema contract anchors shared across harness and Studio UI boundaries",
+    "Local workbench static shell for runtime evidence and system map inspection",
+    "Docs pipeline that generates quickstart, user manual, system map, and changelog from source"
+  ],
+  "publicApiSurface": [
+    "createHarness() — @jami-studio/harness-sdk",
+    "harness.run({ runId, providerId, sourceRepo, sourceCommit, sourceRef })",
+    "harness.resume({ runId })",
+    "harness.approve({ runId, actionId })",
+    "harness.deny({ runId, actionId })",
+    "harness.inspect()",
+    "createFileSystemCheckpointStore() — @jami-studio/harness-store-local",
+    "createDefaultPolicyEngine(options) — @jami-studio/harness-policy",
+    "evaluate(request) — policy engine port",
+    "listToolAdapterCapabilities() — @jami-studio/harness-tools",
+    "listToolAdapterSourceLocks() — @jami-studio/harness-tools",
+    "dryRunUnsupportedAdapter() — @jami-studio/harness-tools",
+    "artifactRecord creation — @jami-studio/harness-artifacts",
+    "jami init --json",
+    "jami run --json",
+    "jami resume --json --run-id <runId>",
+    "jami approve --json --run-id <runId> --action-id <actionId>",
+    "jami deny --json --run-id <runId> --action-id <actionId>",
+    "jami inspect --json",
+    "jami doctor --json",
+    "jami tools --json",
+    "jami map --json",
+    "jami verify --json",
+    "jami workbench --json",
+    "Contract schemas: runEvent, toolExecution, policyDecision, artifactRecord, evidencePacket, actionRef, approvalRequest, auditEvent, secretRef, memoryRecord, contextPack, capabilityManifest"
+  ]
+}

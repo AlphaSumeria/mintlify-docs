@@ -1,0 +1,141 @@
+---
+title: "Human-in-the-Loop Approvals for Elevated Agent Actions"
+sidebarTitle: "Approvals"
+description: "Pause agent runs on elevated-risk actions, route decisions to a human reviewer, then resume or terminate based on their approval or denial."
+---
+
+When your agent attempts an action the policy engine classifies as elevated-risk, the run automatically pauses and returns an `approval_required` status. No further progress happens until a human explicitly approves or denies the pending action. This gives you a hard boundary between automated agent behavior and actions that require human judgement — without any custom middleware.
+
+## The Approval Lifecycle
+
+Every approval flows through the same lifecycle, enforced by the policy engine:
+
+<Steps>
+  <Step title="Run starts">
+    You call `harness.run()`. The runtime executes the agent workflow and evaluates each action through the policy-gated tool gateway.
+  </Step>
+  <Step title="Policy triggers needs_approval">
+    When the policy engine returns `needs_approval` for an elevated-risk action, the runtime pauses immediately. No further tool calls or provider completions occur.
+  </Step>
+  <Step title="Run returns approval_required">
+    `harness.run()` resolves with `status: 'approval_required'` and a `pendingActionId` identifying the action that needs review.
+  </Step>
+  <Step title="Human reviews and decides">
+    You retrieve the pending action details, notify your team, and route the decision to a reviewer through whatever mechanism your workflow requires.
+  </Step>
+  <Step title="Approve or deny">
+    Call `harness.approve()` to allow the action and resume the run, or `harness.deny()` to reject the action and terminate the run.
+  </Step>
+  <Step title="Approval record written">
+    The decision — actor, run, action, scopes, and audit evidence — is written as an approval record under `.jami-harness/approvals/` and tied to the run's evidence chain.
+  </Step>
+</Steps>
+
+## Handling Approvals in Code
+
+The following example shows a complete approval flow: starting a run, detecting the `approval_required` status, and issuing the approval or denial decision.
+
+```js
+import { createHarness } from '@jami-studio/harness-sdk';
+import { createFileSystemCheckpointStore } from '@jami-studio/harness-store-local';
+
+const checkpointStore = createFileSystemCheckpointStore();
+const harness = createHarness({ checkpointStore });
+
+// Start a run — it may pause for approval
+const result = await harness.run({ runId: 'run_risky_task' });
+
+if (result.status === 'approval_required') {
+  const actionId = result.pendingActionId;
+
+  // Notify your team and gather a decision out-of-band.
+  // When ready, approve or deny the pending action:
+
+  // Approve — records the decision and writes the approval record
+  harness.approve({ runId: 'run_risky_task', actionId });
+
+  // Or deny — records the denial decision
+  // harness.deny({ runId: 'run_risky_task', actionId });
+}
+```
+
+<Warning>
+  The run does not automatically continue after you call `harness.approve()`. Call `harness.resume('run_risky_task')` immediately after approving if you want the run to proceed in the same process. If you are building an async approval flow across process boundaries, the checkpoint state persisted by the filesystem store lets you resume from a separate process later.
+</Warning>
+
+## CLI Equivalents
+
+You can also record approvals and denials directly from the CLI, which is useful for scripts, CI pipelines, and manual operator workflows:
+
+```bash
+# Approve an action
+jami approve --json --run-id run_risky_task --action-id act_abc123
+
+# Deny an action
+jami deny --json --run-id run_risky_task --action-id act_abc123
+```
+
+Both commands write the decision to `.jami-harness/approvals/` and return the full approval record as JSON.
+
+## Approval Records
+
+Every decision is persisted as a structured approval record. The record ties together:
+
+<ResponseField name="approvalId" type="string">
+  A unique identifier for this approval record.
+</ResponseField>
+
+<ResponseField name="runId" type="string">
+  The ID of the run this approval belongs to.
+</ResponseField>
+
+<ResponseField name="actionId" type="string">
+  The ID of the specific action being approved or denied.
+</ResponseField>
+
+<ResponseField name="actorId" type="string">
+  The identifier of the human or system that issued the decision (e.g. `'actor_developer'`).
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  The decision outcome: `'approved'`, `'denied'`, `'revoked'`, or `'expired'`.
+</ResponseField>
+
+<ResponseField name="scopes" type="array">
+  The permission scopes this approval covers. Scoped approvals limit the blast radius of a single decision.
+</ResponseField>
+
+<ResponseField name="approvedAt" type="string">
+  ISO timestamp recording when the decision was made.
+</ResponseField>
+
+<ResponseField name="expiresAt" type="string">
+  Optional ISO timestamp after which this approval is no longer valid. Expired approvals are rejected by the policy engine at replay time.
+</ResponseField>
+
+<ResponseField name="evidenceRef" type="string">
+  The evidence ID linking this approval decision to the run's evidence packet.
+</ResponseField>
+
+## Expiry and Replay Protection
+
+The policy engine enforces two protections on every approval record:
+
+1. **Expiry**: Approvals carry an expiry timestamp. Any attempt to use an expired approval during a replay is rejected.
+2. **Replay protection**: Approval tokens are single-use. A token that has already been consumed by the policy engine cannot be replayed to authorize a second action.
+
+These protections mean you cannot re-authorize past runs by re-submitting an old approval record. Each action in each run requires a fresh decision.
+
+<Info>
+  Approvals use the same evidence contract as all other run events. Every approve and deny decision is recorded as a structured audit entry in the run's evidence packet, making your human-in-the-loop decisions fully auditable alongside the automated steps that preceded them.
+</Info>
+
+## Inspecting Approvals for a Run
+
+Use `jami inspect --json --run-id <run_id>` to view all approval records associated with a specific run:
+
+```bash
+jami inspect --json --run-id run_risky_task
+```
+
+The output includes an `approvals` array with every recorded decision for that run, including status (`approved` or `denied`), actor, action ID, and the full approval payload.

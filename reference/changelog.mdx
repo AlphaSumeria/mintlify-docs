@@ -1,0 +1,318 @@
+---
+title: "Jami Harness Changelog: Full Release History and Updates"
+sidebarTitle: "Changelog"
+description: "Complete release notes for Jami Harness, covering new capabilities, API changes, and behavior fixes across every published version in the v0.1.x series."
+---
+
+Jami Harness follows a versioned release process. Every user-visible change is recorded here, grouped by version. Releases live in the **v0.1.x** era. You can always find the latest tags and attached attestation bundles on the [GitHub Releases page](https://github.com/studio-jami/jami-harness/releases).
+
+<Info>
+  The canonical release page is **[github.com/studio-jami/jami-harness/releases](https://github.com/studio-jami/jami-harness/releases)**. Each release tag ships a signed bundle (`jami-harness-vX.Y.Z.tgz`) you can verify with `gh attestation verify`.
+</Info>
+
+---
+
+## v0.1.1 — Patch Release (2026-06-13)
+
+<Accordion title="Public Install Paths and Smoke Gate (2026-06-13)">
+  **Surface:** SDK, CLI · **Type:** fix
+
+  Updated public SDK and CLI inspection so that npm install paths, package provenance evidence, and release attestation status are correctly reported as available after the v0.1.0 release. Added a configurable hosted-route smoke gate that stays fail-closed when hosted provider, store, or OTLP secrets are absent. Prepared `@jami-studio/harness-core`, `@jami-studio/harness-sdk`, and `@jami-studio/harness-cli` for the 0.1.1 patch release.
+</Accordion>
+
+<Accordion title="Hosted Provider Adapter — Fail-Closed (2026-06-13)">
+  **Surface:** Provider · **Type:** feature
+
+  Added a fail-closed hosted provider adapter package with an OpenAI Responses API route that only executes when explicit Jami Harness environment variables are configured. Default provider execution routes through local deterministic selection first, preserving fully deterministic local behavior when hosted secrets are absent.
+</Accordion>
+
+---
+
+## v0.1.0 — Initial Release (2026-06-07 – 2026-06-12)
+
+The entries below cover all changes accepted into the v0.1.0 release, organized by theme.
+
+### Run Lifecycle
+
+<Accordion title="Runtime Kernel (2026-06-09)">
+  **Surface:** runtime · **Type:** added
+
+  Added the `@jami-studio/harness-runtime` package with typed run lifecycle events, Studio UI reference emission, and policy-gated action refs. The runtime fails closed on malformed, poisoned, replayed, secret-inline, and denied action requests.
+</Accordion>
+
+<Accordion title="Checkpoint Resume Store Foundation (2026-06-09)">
+  **Surface:** SDK, CLI · **Type:** feature
+
+  - Added local replaceable checkpoint store ports with in-memory and filesystem defaults, redacted replay hashes, and local approval records.
+  - Wired SDK and CLI `run` / `resume` / `approve` / `doctor` surfaces through the checkpoint store.
+  - Added context and search adapter ports with citation-preserving token-budget assembly.
+  - Added tests covering replay and redaction, path-safe resume, approval evidence, adapter capability inspection, and cross-actor memory leakage.
+</Accordion>
+
+<Accordion title="Store Approval Validation Hardening (2026-06-09)">
+  **Surface:** store · **Type:** fix
+
+  Hardened local approval records so store-level callers must use stable `apr_*`, `act_*`, and `actor_*` identifiers instead of relying on silent normalization. Added negative coverage for malformed identifiers, unsupported approval statuses, and replay-unsafe expiry windows.
+</Accordion>
+
+<Accordion title="CLI and SDK Local Foundation (pre-release)">
+  **Surface:** CLI, SDK · **Type:** feature
+
+  Added CLI and SDK foundations for idempotent `init`, local run evidence, inspectable module capabilities, JSON output, and a runnable local evidence example. Provider runtime, tool gateway, hosted workbench, hosted stores, docs generation, and release publishing were not yet available at this stage.
+</Accordion>
+
+<Accordion title="Fail-Closed ID Validation for CLI and SDK (pre-release)">
+  **Surface:** SDK · **Type:** fix
+
+  Hardened the CLI and SDK local evidence path so malformed run, artifact, and evidence identifiers fail with structured errors before any local state or evidence artifacts are read or written. Invalid injected core modules now fail during SDK construction.
+</Accordion>
+
+---
+
+### Policy
+
+<Accordion title="Policy Runtime Foundation (2026-06-09)">
+  **Surface:** policy · **Type:** added
+
+  - Added policy, approval, audit, and secret-reference contract anchors with generated contract artifacts.
+  - Added hardening fixtures for prompt injection, tool metadata poisoning, MCP transport abuse, secret exfiltration, approval replay, denied action audit state, and secret-reference value leakage.
+  - Shipped `@jami-studio/harness-policy` with a default-deny policy engine, a policy-gated run helper, and full root verification coverage.
+</Accordion>
+
+<Accordion title="Policy Gate Hardening (2026-06-09)">
+  **Surface:** policy · **Type:** fix
+
+  Hardened the policy runtime so malformed action requests fail closed with typed `run_unknown`, `actor_unknown`, `proj_unknown`, `unknown` environment, and `unknown` risk denial evidence — instead of producing contract-invalid audit records. Added regression coverage for all malformed policy request shapes.
+</Accordion>
+
+---
+
+### Tools
+
+<Accordion title="Tool Gateway Foundation (2026-06-09)">
+  **Surface:** tools, contracts, SDK, CLI · **Type:** feature
+
+  Added a narrow policy-gated tool gateway with a replaceable registry, risk labels, one execution envelope, typed `toolExecution` contract fixtures, trace/audit/evidence/artifact output, timeout and cancellation status, and redaction for secret-like inputs and results. Function tools are the only executable adapter in this release. MCP, OpenAPI, shell, browser, code, provider-as-tool, and A2A adapters are explicitly unsupported and produce fail-closed evidence records.
+</Accordion>
+
+<Accordion title="Tool Gateway Hardening (2026-06-09)">
+  **Surface:** tools · **Type:** fix
+
+  Hardened the tool gateway so replaceable policy-engine failures fail closed as typed denied executions, non-cooperative handlers return deterministic timeout records, and failed-tool error messages are redacted before traces or artifacts record them.
+</Accordion>
+
+<Accordion title="Tool Adapter Capability Inspection (2026-06-09)">
+  **Surface:** tools · **Type:** feature
+
+  Added per-adapter tool gateway manifests, CLI/SDK adapter capability inspection, and fail-closed unsupported dry-run evidence for OpenAPI, shell, browser, code, provider-as-tool, and A2A — without enabling external execution. Run `jami tools --json` to inspect current adapter support status.
+</Accordion>
+
+<Accordion title="MCP Trusted In-Process Fixture Adapter (2026-06-09)">
+  **Surface:** tools · **Type:** feature
+
+  Added a narrow trusted in-process MCP fixture adapter supporting protocol version `2025-11-25`. The adapter maps `initialize`, `tools/list`, and `tools/call` through the existing policy-gated tool envelope, rejects poisoned metadata and unsupported protocol versions, and records unsupported stdio, Streamable HTTP, OAuth, resources, prompts, roots, sampling, elicitation, tasks, and resumability in the MCP capability manifest.
+</Accordion>
+
+<Accordion title="MCP Direct Registration Hardening (2026-06-09)">
+  **Surface:** tools · **Type:** fix
+
+  Tightened the tool gateway so `adapter_mcp` handlers execute only when produced by the trusted in-process fixture discovery path. Direct MCP-shaped tool registrations now fail closed as unsupported and still produce typed tool execution, trace, evidence, and artifact records without invoking the handler.
+</Accordion>
+
+---
+
+### Memory, Context, and Artifacts
+
+<Accordion title="Artifacts, Observability, and Memory Foundations (2026-06-09)">
+  **Surface:** artifacts, observability, memory · **Type:** feature
+
+  - Added artifact, observability, and memory package foundations with local replaceable defaults for artifact provenance, runtime evidence export, trace/audit references, permission-filtered memory recall, citation freshness, retention, redaction, and deterministic context replay.
+  - Extended contracts, generated references, and fixtures for `artifactRecord`, `traceEvent`, `memoryRecord`, and `contextPack`.
+  - Hosted stores, OpenTelemetry export, vector search, docs generation, CLI, and workbench surfaces remained explicitly out of scope for this release.
+</Accordion>
+
+<Accordion title="Artifact and Evidence Provenance Hardening (2026-06-09)">
+  **Surface:** artifacts, observability · **Type:** fix
+
+  Tightened artifact/evidence provenance contracts so artifact records, artifact views, and evidence packets carry source repo, commit, ref, timestamp, redaction state, output paths where applicable, and accepted contract names with versions. Runtime artifact-view emission now fails closed when required provenance fields are missing.
+</Accordion>
+
+<Accordion title="Core Composition Package (2026-06-12)">
+  **Surface:** core, SDK · **Type:** feature
+
+  Added `@jami-studio/harness-core` as the owned default composition package for runtime, policy, tools, memory, context, search, artifacts, observability, stores, providers, and docs-output ports. The SDK now consumes this core composition package instead of owning module assembly directly.
+</Accordion>
+
+<Accordion title="Core Composition Adapter Inspection Hardening (2026-06-12)">
+  **Surface:** core · **Type:** fix
+
+  Hardened core composition inspection so injected adapter capability data cannot hide unsupported adapter states or omit adapter coverage from inspection output.
+</Accordion>
+
+---
+
+### Observability
+
+<Accordion title="Observability Metrics and Smoke Scenarios (2026-06-09)">
+  **Surface:** observability · **Type:** feature
+
+  Added local redacted metric records for latency, estimated tokens, zero external-billable local provider cost, and tool-call measurements. Added deterministic `pnpm eval:smoke` scenarios for tool safety, docs generation, memory recall, and recovery.
+</Accordion>
+
+<Accordion title="Observability Redaction Fix (2026-06-09)">
+  **Surface:** observability · **Type:** fix
+
+  Tightened local evidence redaction so authorization bearer strings do not leak residual tokens and metric dimensions keep safe token-measurement labels while still redacting actual token-bearing fields.
+</Accordion>
+
+<Accordion title="Trace Attribute Redaction Hardening (2026-06-09)">
+  **Surface:** observability · **Type:** fix
+
+  Hardened observability defaults so trace attributes redact prompt fields and tool metadata in addition to secret-like values before evidence export.
+</Accordion>
+
+<Accordion title="Metric Evidence Contract Hardening (2026-06-09)">
+  **Surface:** observability · **Type:** fix
+
+  Tightened metric evidence contract declarations, secret-string redaction, schema-shaped metric source refs, and local token/cost wording so metric evidence does not imply hosted-provider billing or exact provider token counts.
+</Accordion>
+
+---
+
+### CLI and SDK Surfaces
+
+<Accordion title="Local Deterministic Provider Foundation (2026-06-09)">
+  **Surface:** provider, SDK, CLI · **Type:** feature
+
+  Added a replaceable local deterministic provider package, SDK and CLI workflow wiring, fail-closed external-provider routing, provider capability manifests, recoverable fail-once fixtures, and tests proving the local provider path can execute through the policy-gated tool gateway, checkpoints, artifacts, traces, memory/context, and evidence.
+</Accordion>
+
+<Accordion title="CLI Unsupported Provider Exit Hardening (2026-06-09)">
+  **Surface:** CLI · **Type:** fix
+
+  Hardened `jami run --provider-id <hosted-provider>` so unsupported provider routes still write evidence and summaries but return a nonzero exit code and `ok: false` in JSON output.
+</Accordion>
+
+<Accordion title="SDK and CLI Control-Surface Expansion (2026-06-12)">
+  **Surface:** SDK, CLI, workbench · **Type:** feature
+
+  - Added SDK inspection for the local control-surface matrix across `run`, `resume`, `approve`, `deny`, `cancel`, `retry`, `inspect`, `tools`, `memory`, `context`, `docs`, `map`, `workbench`, `release`, `doctor`, `verify`, and `migration`.
+  - Added CLI JSON surfaces for `deny`, `cancel`, `retry`, `context`, `workbench`, `release`, and `migration` while keeping cancellation, manual retry orchestration, and migrations fail-closed unsupported.
+  - Extended the local workbench manifest to render the SDK/CLI control-surface matrix from generated evidence.
+  - Hardened unsupported cancel/retry/migration CLI routes so they do not initialize local state when reporting fail-closed gaps.
+</Accordion>
+
+<Accordion title="Local Workbench Shell (2026-06-09)">
+  **Surface:** CLI · **Type:** feature
+
+  Added a dependency-free local static workbench shell under `apps/workbench` that renders current SDK runtime evidence, explicit CLI state summaries, local approval records, artifacts, traces, memory/context, generated docs previews, and the generated system map. Hosted workbench, hosted stores, Studio UI package integration, Mintlify validation/build/publish, and release publishing remain fail-closed unsupported.
+</Accordion>
+
+---
+
+### Contracts and Schemas
+
+<Accordion title="Contract Package Foundation (2026-06-09)">
+  **Surface:** contracts · **Type:** added
+
+  Added the initial `@jami-studio/harness-contracts` package with JSON Schema anchors, compatibility fixtures, and a validation command for the harness-owned UI/action/artifact seam. Wired `pnpm verify` to run contract validation in addition to docs checks.
+</Accordion>
+
+<Accordion title="Contract Generation Artifacts (2026-06-09)">
+  **Surface:** contracts · **Type:** feature
+
+  Added checked contract generation artifacts, evidence packet and threat-model fixture catalog schemas, and generation drift checks in the contracts validation path.
+</Accordion>
+
+<Accordion title="Contract Validation Hardening (2026-06-09)">
+  **Surface:** contracts · **Type:** fix
+
+  - Required compatibility fixture coverage for every current harness/UI shared schema anchor.
+  - Added semantic negative validation for denied actions, renderer error events, and unsafe UI payload props.
+</Accordion>
+
+<Accordion title="Shared Contract Fixture Matrix (2026-06-12)">
+  **Surface:** contracts · **Type:** feature
+
+  Extended the shared contract fixture matrix for run events, UI payloads, artifact views, action refs, theme refs, suite refs, evidence packets, memory records, context packs, and capability manifests. `pnpm contracts:validate` now fails when a declared contract state is missing from machine-readable fixture coverage.
+</Accordion>
+
+<Accordion title="Run Event and Action Ref Fixture Coverage (2026-06-12)">
+  **Surface:** contracts · **Type:** fix
+
+  Hardened the shared contract validator so `runEvent` and `actionRef` coverage states must be backed by matching fixture payload evidence. Added individual state fixtures for lifecycle and policy-gated action refs.
+</Accordion>
+
+<Accordion title="UI Payload Negative Fixture Hardening (2026-06-12)">
+  **Surface:** contracts · **Type:** fix
+
+  Hardened the shared-seam validator so `uiPayload` coverage cannot aggregate multiple negative states in one fixture. Added separate machine-readable fixtures for invalid props, stale vocabulary, unknown components, package imports, serialized React markers, HTML/script strings, handler props, and secret-shaped values.
+</Accordion>
+
+---
+
+### Release, SBOM, and Docs Infrastructure
+
+<Accordion title="Release Readiness Audit Surface (2026-06-09)">
+  **Surface:** repo · **Type:** ops
+
+  Added the release-readiness audit surface: package metadata now carries Apache-2.0 and repository provenance, `pnpm release:readiness` and `pnpm release:dry-run` report publish-blocking gaps without publishing, and durable docs record the public claims matrix, SBOM policy, package provenance, attestation policy, unavailable release commands, and required human account interventions.
+</Accordion>
+
+<Accordion title="Release Capability Manifest (2026-06-09)">
+  **Surface:** release · **Type:** feature
+
+  Added a generated release/hosted capability manifest with check-mode drift protection. The manifest records official-source prerequisites for npm provenance, GitHub attestations, and Mintlify validation while keeping hosted docs, hosted providers, hosted stores, hosted workbench, package publishing, and attestation surfaces fail-closed until executable evidence exists.
+</Accordion>
+
+<Accordion title="SBOM Dry-Run Generation (2026-06-09)">
+  **Surface:** repo · **Type:** ops
+
+  Added dependency-free local SBOM dry-run generation and drift checking through `pnpm sbom:generate` and `pnpm sbom:check`, with CycloneDX-format output and release-readiness wiring.
+</Accordion>
+
+<Accordion title="SBOM Generation Determinism Fix (2026-06-09)">
+  **Surface:** release · **Type:** fix
+
+  Hardened the checked SBOM artifact so tracked generation uses a symbolic `git:HEAD` source marker and reports the resolved commit at command runtime, avoiding post-commit drift from embedding a self-referential commit hash.
+</Accordion>
+
+<Accordion title="Docs Generator Foundation (2026-06-09)">
+  **Surface:** docs · **Type:** feature
+
+  Added a deterministic `packages/docs` generator that emits generated quickstart, manual, API reference, system map, changelog, evidence index, docs-source manifest, and Mintlify-ready draft outputs from accepted source records. The check mode is wired into `pnpm verify` and release readiness without claiming hosted docs or Mintlify build.
+</Accordion>
+
+<Accordion title="Install Readiness Manifest (2026-06-09)">
+  **Surface:** docs · **Type:** docs
+
+  Added SDK/CLI install-path inspection and a generated install-readiness manifest covering the current full local source-checkout path plus modular BYO memory, context, search, store, provider, policy, tools, artifacts, observability, and docs-output paths.
+</Accordion>
+
+<Accordion title="Hosted Route Readiness (2026-06-12)">
+  **Surface:** docs · **Type:** feature
+
+  Added generated preview hosted status/control routes and release checks for harness status, release-readiness, and provider/store/observability readiness while keeping Cloudflare, DNS, Neon, hosted provider, and OTLP export claims fail-closed until provisioned and smoke-tested.
+</Accordion>
+
+<Accordion title="Canonical Repository Owner Alignment (2026-06-12)">
+  **Surface:** repo, release · **Type:** fix
+
+  Aligned package repository metadata with the live GitHub canonical owner `studio-jami/jami-harness`. The old `JamiStudio/jami-harness` remote still redirects, but generated release and hosted evidence now uses the correct repository identity.
+</Accordion>
+
+---
+
+### Rename and Early Infrastructure
+
+<Accordion title="Jami Harness Rename (2026-06-08)">
+  **Surface:** docs · **Type:** changed
+
+  Renamed the canonical repository and all product references from Agent Harness to **Jami Harness**, including the active roadmap, package metadata, and remote guidance.
+</Accordion>
+
+<Accordion title="Local-First Verification Workflow (2026-06-07)">
+  **Surface:** repo · **Type:** ops
+
+  Added local-first verification, manual CI fallback, diagram and system-map rules, changelog fragments, and fail-closed behavior for unverified states.
+</Accordion>

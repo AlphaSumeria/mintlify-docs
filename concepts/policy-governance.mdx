@@ -1,0 +1,176 @@
+---
+title: "Policy and Governance for Jami Harness Agent Actions"
+sidebarTitle: "Policy & Governance"
+description: "Understand Jami Harness's default-deny policy engine, how approvals gate high-risk actions, and how every decision produces tamper-evident audit evidence."
+---
+
+Every action an agent proposes — tool calls, secret references, scoped operations — passes through the Jami Harness policy engine before anything executes. The engine is **default-deny**: if a request does not positively satisfy all policy rules, it is blocked. This page explains what the policy engine evaluates, the decisions it can return, how the approval workflow operates, and how to read the audit trail it produces.
+
+## How the Policy Engine Works
+
+The policy engine lives in `@jami-studio/harness-policy`. It exports an `evaluate(request)` function that accepts a structured action request and returns one of four typed decisions. Nothing runs until `evaluate` returns `allow` — or until a human approves a `needs_approval` decision.
+
+You can replace the engine behind the harness policy port with your own implementation, but the default-deny posture and audit evidence requirements are part of the harness contract. Your replacement must preserve both.
+
+### Policy Decisions
+
+| Decision | Meaning |
+|---|---|
+| `allow` | The action satisfies all policy rules. Execution proceeds. |
+| `deny` | The action is blocked. A denial record and audit event are produced. The run may continue or fail depending on whether the action was required. |
+| `needs_approval` | The action requires explicit human sign-off. The run pauses until approved or denied. |
+| `needs_owner` | The action requires owner-level authority beyond what the requesting actor holds. |
+
+## What Triggers a Denial
+
+The default engine fails closed for any of the following conditions. Each produces a typed denial with redacted audit evidence.
+
+<CardGroup cols={2}>
+  <Card title="Missing scopes" icon="key">
+    The actor's granted scopes do not cover the scopes the action requests. No partial matches are accepted.
+  </Card>
+  <Card title="Prompt injection signals" icon="shield-xmark">
+    Untrusted prompt content is detected attempting to request external tool execution or override agent instructions.
+  </Card>
+  <Card title="Tool metadata poisoning" icon="bug">
+    Submitted tool metadata does not match trusted in-process fixture evidence, indicating a potential supply chain attack.
+  </Card>
+  <Card title="Unsafe MCP transport" icon="triangle-exclamation">
+    An MCP transport path (stdio subprocess, remote Streamable HTTP, OAuth) that is not the narrow trusted in-process fixture path is detected.
+  </Card>
+  <Card title="Secret value leakage" icon="eye-slash">
+    A raw secret value is detected inline in an action request. Only `secretRef` references are permitted — never actual values.
+  </Card>
+  <Card title="Approval replay" icon="rotate-left">
+    A reused or replayed approval token is detected. Each approval is single-use and tied to a specific `actionId` and `runId`.
+  </Card>
+  <Card title="Approval expiry" icon="clock">
+    An approval token has passed its `expiresAt` timestamp. Expired approvals are re-requested, not automatically renewed.
+  </Card>
+  <Card title="Actor/action/scope mismatch" icon="user-slash">
+    The `actorId`, `actionId`, or scope combination in the request does not match the bound identity for the run.
+  </Card>
+</CardGroup>
+
+### Example: Cross-Scope Denial
+
+```json
+{
+  "decisionId": "pol_cross_scope_action_denied",
+  "runId": "run_my_task",
+  "actorId": "actor_developer",
+  "decision": "deny",
+  "risk": "write",
+  "requestedScopes": ["project:other:write"],
+  "matchedScopes": [],
+  "reasons": ["Actor scope does not cover requested project write scope."],
+  "auditRef": "aud_cross_scope_action_denied",
+  "decidedAt": "2026-06-09T12:00:00.000Z"
+}
+```
+
+### Example: Prompt Injection Denial
+
+```json
+{
+  "decisionId": "pol_prompt_injection_denied",
+  "runId": "run_my_task",
+  "actorId": "actor_developer",
+  "decision": "deny",
+  "risk": "external",
+  "requestedScopes": ["tool:network"],
+  "matchedScopes": [],
+  "reasons": ["Untrusted prompt content requested external tool execution."],
+  "redactions": [
+    {
+      "field": "prompt",
+      "mode": "redacted",
+      "reason": "prompt injection payload excluded from evidence"
+    }
+  ]
+}
+```
+
+## Approvals Workflow
+
+When the policy engine returns `needs_approval`, the run pauses and emits an `approval_required` run state. An `approvalRequest` record is persisted containing the `actionId`, `runId`, `actorId`, `requestedScopes`, risk level, and an `expiresAt` timestamp.
+
+<Steps>
+  <Step title="Run pauses">
+    The harness stops executing the pending action and emits a `policy_decision` run event with `decision: needs_approval`. The run enters the `approval_required` state.
+  </Step>
+  <Step title="Human reviews the request">
+    You inspect the pending approval using `jami inspect --json` or your own tooling. The request shows the action label, requested scopes, risk level, and expiry time.
+  </Step>
+  <Step title="Approve or deny">
+    Use the CLI to approve or deny the action. The decision is recorded with a new audit event.
+
+    ```bash
+    # Approve a pending action
+    jami approve --json --run-id run_my_task --action-id action_123
+
+    # Deny a pending action
+    jami deny --json --run-id run_my_task --action-id action_456
+    ```
+  </Step>
+  <Step title="Run resumes or terminates">
+    If approved, the harness resumes from the checkpoint and executes the action. If denied, the run either continues without that action (if optional) or transitions to `failed`.
+  </Step>
+</Steps>
+
+<Warning>
+  Approval tokens are **single-use and time-bounded**. Never attempt to replay an approval across runs or after `expiresAt`. The policy engine detects and blocks replayed tokens and produces a denial audit event for each attempt.
+</Warning>
+
+## Secret References
+
+Agents in Jami Harness never handle actual secret values. Instead, they work with **`secretRef`** objects that carry only reference metadata: a `secretId`, the provider that holds the secret (such as `env`), a scope, and a redaction class. The actual secret value remains outside the harness execution context entirely.
+
+```json
+{
+  "secretId": "sec_github_token",
+  "provider": "env",
+  "scope": "github:repo",
+  "redactionClass": "token",
+  "description": "Reference to a local GitHub token, not the token value."
+}
+```
+
+<Warning>
+  **Never** embed actual secret values in action requests, tool inputs, prompt content, or memory records. The policy engine treats any detected secret value as an exfiltration attempt and immediately produces a `deny` decision with a `secret_adjacent` risk label. The offending field is omitted from all evidence output.
+</Warning>
+
+## actionRef: Policy-Gated UI Slots
+
+An **`actionRef`** is the surface through which policy-gated actions are exposed to a UI. It carries the action's label, route, risk level, required policy scope, and current state — but it never carries executable payloads. UI renderers display `actionRef` data; they do not execute actions directly.
+
+An `actionRef` transitions through states that mirror the policy decision lifecycle:
+
+| State | Meaning |
+|---|---|
+| `pending_approval` | Waiting for human sign-off |
+| `executed` | Approved and successfully run |
+| `replayed` | Blocked — replay of a prior approval detected |
+| `denied` | Denied by policy or by a human reviewer |
+| `expired` | Approval window passed without a decision |
+
+## Audit Events
+
+Every policy decision — whether `allow`, `deny`, `needs_approval`, or `needs_owner` — produces a structured **audit event**. Audit events are redacted by default: sensitive fields like prompts, inline secrets, and credential metadata are excluded before the event is persisted.
+
+```json
+{
+  "auditId": "aud_denied_publish_release",
+  "runId": "run_my_task",
+  "actorId": "actor_developer",
+  "eventType": "tool.denied",
+  "outcome": "deny",
+  "policyDecisionRef": "pol_missing_release_scope",
+  "evidenceRef": "ev_denied_publish_release",
+  "redactionMode": "redacted",
+  "summary": "Publish release was denied because actor lacked release scope.",
+  "occurredAt": "2026-06-09T12:00:00.000Z"
+}
+```
+
+Audit events reference policy decisions by ID (`policyDecisionRef`) and evidence packets by ID (`evidenceRef`), letting you reconstruct the full decision chain from audit alone without re-running the agent.

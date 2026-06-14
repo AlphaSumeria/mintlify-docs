@@ -1,0 +1,266 @@
+---
+title: "runEvent Schema: Harness Run Timeline Events"
+sidebarTitle: "runEvent"
+description: "Every state change in a Jami Harness run emits a typed runEvent. Learn the full schema, event types, and field semantics with real fixture examples."
+---
+
+The `runEvent` schema is the foundation of the Jami Harness observability model. Every meaningful state change in a run — from the moment the agent starts to the moment it completes, fails, is cancelled, or emits an artifact — produces a typed, sequenced `runEvent` record. UI subscribers, audit pipelines, and trace tooling all consume these records to reconstruct run history without needing access to internal state.
+
+<Info>
+  **Schema ID:** `https://jami.studio/schemas/harness/run-event.schema.json`
+  — version `2026-06-09`
+</Info>
+
+## When the harness emits runEvents
+
+The harness emits one `run.started` event when a run opens, then a stream of typed events for every lifecycle transition, tool call, artifact emission, policy decision, approval request, UI payload, checkpoint, and renderer outcome. The final event is always one of `run.completed`, `run.failed`, or `run.cancelled`. Redacted runs append a `run.redacted` event after the terminal event when the harness strips sensitive content from the timeline.
+
+The `sequence` field starts at `0` and increments monotonically within a run. Consumers can sort and replay the event stream from this field alone — no wall-clock ordering is assumed.
+
+## Event type reference
+
+<CardGroup cols={2}>
+  <Card title="Lifecycle" icon="arrow-right-arrow-left">
+    `run.started` · `run.progress` · `run.completed` · `run.failed` · `run.retrying` · `run.cancelling` · `run.cancelled` · `run.recovered` · `run.redacted`
+  </Card>
+  <Card title="Policy & Approval" icon="shield-check">
+    `policy.decision` · `approval.requested`
+  </Card>
+  <Card title="Tool Calls" icon="wrench">
+    `tool.call.requested` · `tool.running` · `tool.call.completed`
+  </Card>
+  <Card title="Artifacts & UI" icon="box-archive">
+    `artifact.created` · `artifact.emitted` · `checkpoint.saved` · `ui.payload.emitted` · `renderer.error`
+  </Card>
+</CardGroup>
+
+## Schema fields
+
+<ResponseField name="schemaVersion" type="string" required>
+  Always `"2026-06-09"`. The harness rejects records that carry a different value at the `const` boundary.
+</ResponseField>
+
+<ResponseField name="eventId" type="string" required>
+  Unique identifier for this event. Must match the pattern `^evt_[a-z0-9][a-z0-9_-]*$`.
+</ResponseField>
+
+<ResponseField name="runId" type="string" required>
+  Identifier for the parent run. Must match `^run_[a-z0-9][a-z0-9_-]*$`. Every event in the same run shares this value.
+</ResponseField>
+
+<ResponseField name="taskId" type="string">
+  Optional task identifier when the run was spawned from a named task. Must match `^task_[a-z0-9][a-z0-9_-]*$`.
+</ResponseField>
+
+<ResponseField name="sequence" type="integer" required>
+  Monotonically increasing integer starting at `0` for `run.started`. Consumers use this field to sort and replay the event stream.
+</ResponseField>
+
+<ResponseField name="occurredAt" type="string (date-time)" required>
+  ISO 8601 timestamp of when the event occurred, in UTC.
+</ResponseField>
+
+<ResponseField name="eventType" type="string (enum)" required>
+  The typed event discriminator. One of:
+  `run.started`, `run.progress`, `run.completed`, `run.failed`, `run.retrying`, `run.cancelling`, `run.cancelled`, `run.recovered`, `run.redacted`, `policy.decision`, `approval.requested`, `tool.call.requested`, `tool.running`, `tool.call.completed`, `artifact.created`, `artifact.emitted`, `checkpoint.saved`, `ui.payload.emitted`, `renderer.error`.
+</ResponseField>
+
+<ResponseField name="traceRef" type="object">
+  Optional OpenTelemetry trace context attached to this event.
+
+  <Expandable title="traceRef fields">
+    <ResponseField name="traceId" type="string" required>
+      The W3C trace ID for the current distributed trace.
+    </ResponseField>
+    <ResponseField name="spanId" type="string">
+      Optional span ID for the specific operation that produced this event.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="policyDecision" type="object">
+  Inline policy summary emitted when `eventType` is `policy.decision`. For the full decision record, resolve `auditRef` against the `policyDecision` store.
+
+  <Expandable title="policyDecision fields">
+    <ResponseField name="decision" type="string (enum)" required>
+      Outcome of the policy evaluation: `allow`, `deny`, `needs_approval`, or `needs_owner`.
+    </ResponseField>
+    <ResponseField name="scope" type="string" required>
+      The primary scope string the decision applied to.
+    </ResponseField>
+    <ResponseField name="reason" type="string">
+      Human-readable summary of why the decision was reached.
+    </ResponseField>
+    <ResponseField name="auditRef" type="string">
+      Reference to the full `auditEvent` record that captures the decision evidence.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="uiPayloadRef" type="string">
+  Reference to a `uiPayload` record when `eventType` is `ui.payload.emitted`. The payload itself is not embedded in the event.
+</ResponseField>
+
+<ResponseField name="artifactViewRef" type="string">
+  Reference to an `artifactView` record when `eventType` is `artifact.emitted` or `checkpoint.saved`.
+</ResponseField>
+
+<ResponseField name="actionRef" type="string">
+  Reference to an `actionRef` record when `eventType` is `approval.requested`.
+</ResponseField>
+
+<ResponseField name="rendererState" type="string (enum)">
+  Reports the outcome of any renderer invocation for this event. One of: `not_requested`, `rendered`, `unsupported_component`, `invalid_payload`, `error_state`.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Human-readable description of the event, suitable for display in a terminal or log.
+</ResponseField>
+
+## Examples
+
+<CodeGroup>
+
+```json run.started
+{
+  "schemaVersion": "2026-06-09",
+  "eventId": "evt_my_run_start",
+  "runId": "run_my_task_example",
+  "taskId": "task_my_agent_work",
+  "sequence": 0,
+  "occurredAt": "2026-06-12T14:00:00.000Z",
+  "eventType": "run.started",
+  "traceRef": {
+    "traceId": "trace_my_run",
+    "spanId": "span_start"
+  },
+  "rendererState": "not_requested",
+  "message": "Run started."
+}
+```
+
+```json run.progress
+{
+  "schemaVersion": "2026-06-09",
+  "eventId": "evt_my_run_progress",
+  "runId": "run_my_task_example",
+  "taskId": "task_my_agent_work",
+  "sequence": 1,
+  "occurredAt": "2026-06-12T14:00:01.000Z",
+  "eventType": "run.progress",
+  "traceRef": {
+    "traceId": "trace_my_run",
+    "spanId": "span_progress"
+  },
+  "rendererState": "not_requested",
+  "message": "Run progressed."
+}
+```
+
+```json approval.requested
+{
+  "schemaVersion": "2026-06-09",
+  "eventId": "evt_my_run_approval",
+  "runId": "run_my_task_example",
+  "taskId": "task_my_agent_work",
+  "sequence": 2,
+  "occurredAt": "2026-06-12T14:00:02.000Z",
+  "eventType": "approval.requested",
+  "traceRef": {
+    "traceId": "trace_my_run",
+    "spanId": "span_approval"
+  },
+  "actionRef": "act_my_pending_action",
+  "rendererState": "not_requested",
+  "message": "Approval is required before execution."
+}
+```
+
+```json artifact.emitted
+{
+  "schemaVersion": "2026-06-09",
+  "eventId": "evt_my_run_artifact",
+  "runId": "run_my_task_example",
+  "taskId": "task_my_agent_work",
+  "sequence": 4,
+  "occurredAt": "2026-06-12T14:00:04.000Z",
+  "eventType": "artifact.emitted",
+  "traceRef": {
+    "traceId": "trace_my_run",
+    "spanId": "span_artifact"
+  },
+  "artifactViewRef": "artv_my_docs",
+  "rendererState": "not_requested",
+  "message": "Artifact view ref emitted."
+}
+```
+
+```json run.completed
+{
+  "schemaVersion": "2026-06-09",
+  "eventId": "evt_my_run_complete",
+  "runId": "run_my_task_example",
+  "taskId": "task_my_agent_work",
+  "sequence": 12,
+  "occurredAt": "2026-06-12T14:00:12.000Z",
+  "eventType": "run.completed",
+  "traceRef": {
+    "traceId": "trace_my_run",
+    "spanId": "span_complete"
+  },
+  "rendererState": "not_requested",
+  "message": "Run completed."
+}
+```
+
+```json run.failed
+{
+  "schemaVersion": "2026-06-09",
+  "eventId": "evt_my_run_failed",
+  "runId": "run_my_task_example",
+  "taskId": "task_my_agent_work",
+  "sequence": 10,
+  "occurredAt": "2026-06-12T14:00:10.000Z",
+  "eventType": "run.failed",
+  "traceRef": {
+    "traceId": "trace_my_run",
+    "spanId": "span_failed"
+  },
+  "rendererState": "not_requested",
+  "message": "Run failed with a typed error."
+}
+```
+
+```json run.redacted
+{
+  "schemaVersion": "2026-06-09",
+  "eventId": "evt_my_run_redacted",
+  "runId": "run_my_task_example",
+  "taskId": "task_my_agent_work",
+  "sequence": 13,
+  "occurredAt": "2026-06-12T14:00:13.000Z",
+  "eventType": "run.redacted",
+  "traceRef": {
+    "traceId": "trace_my_run",
+    "spanId": "span_redacted"
+  },
+  "rendererState": "not_requested",
+  "message": "Sensitive run payload was redacted."
+}
+```
+
+</CodeGroup>
+
+## Validation invariants
+
+<Warning>
+  The harness enforces these invariants at record boundary. Records that violate them are rejected.
+</Warning>
+
+- `eventId` must be prefixed `evt_` and consist only of lowercase alphanumerics, hyphens, and underscores.
+- `runId` must be prefixed `run_`.
+- `sequence` must be a non-negative integer. Consumers should treat gaps as evidence of dropped events and alert accordingly.
+- `rendererState` must be present when the event could have triggered a renderer. The `not_requested` value explicitly communicates that no render was attempted — it is never absent by default.
+- `artifactViewRef` must be present when `eventType` is `artifact.emitted` or `checkpoint.saved`.
+- `actionRef` must be present when `eventType` is `approval.requested`.
+- `policyDecision` must be present when `eventType` is `policy.decision`.

@@ -1,0 +1,76 @@
+---
+title: "What Is Jami Harness? Provider-Agnostic Agent Runtime"
+sidebarTitle: "Introduction"
+description: "Jami Harness is a provider-agnostic agent SDK and governed action runtime with policy controls, durable artifacts, and replaceable BYO module ports."
+---
+
+Jami Harness is a provider-agnostic agent SDK and governed action runtime. It lets you build and run AI agents that know what they can do, what they changed, what evidence they produced, and when they need human approval. Agents execute through a policy-gated tool gateway, write durable artifact records, and emit structured trace and audit events — all without being coupled to any specific model provider, database, or infrastructure service.
+
+## Product promise
+
+The harness makes agentic development feel reliable on four dimensions:
+
+- **Agents** know what they can do, what they changed, what evidence they produced, and when they need human approval.
+- **Developers** can inspect every run, replay or resume important work, compare outputs, and trust the artifact trail.
+- **Product teams** get changelogs, docs updates, system maps, user guides, and evidence from one canonical source.
+- **Integrations** are powerful but replaceable — product semantics remain owned by the harness, not by any adapter.
+
+## Core components
+
+<CardGroup cols={2}>
+  <Card title="CLI — @jami-studio/harness-cli" icon="terminal">
+    The `jami` command gives you an agent-first local surface for every harness operation: `init`, `run`, `resume`, `approve`, `deny`, `inspect`, `doctor`, `tools`, `memory`, `context`, `map`, `verify`, and more. Every command returns structured JSON and exits with clean codes.
+  </Card>
+  <Card title="SDK — @jami-studio/harness-sdk" icon="code">
+    `createHarness()` composes the full runtime into one developer API. Call `harness.run()`, `harness.resume()`, and `harness.approve()` from any JavaScript or TypeScript project. Inject replacement modules through the same call without changing your run grammar.
+  </Card>
+  <Card title="Policy engine" icon="shield-check">
+    The harness ships with a default-deny policy engine. Every tool call must satisfy policy before execution. Approval workflows let humans authorize sensitive actions, and every decision is recorded as a structured audit event.
+  </Card>
+  <Card title="Tool registry" icon="wrench">
+    Register function tools and trusted MCP fixtures through the policy-gated tool gateway. The gateway enforces execution envelopes, records adapter manifests, and fails closed on unsupported adapter types (OpenAPI, shell, browser, code, A2A, remote MCP) until those surfaces are available.
+  </Card>
+  <Card title="Memory and context" icon="database">
+    The harness provides no-op and in-memory adapters out of the box. Context packs preserve inclusion reasons and deterministic hashes across runs. Swap in your own memory or context module through the BYO port without changing how evidence is recorded.
+  </Card>
+  <Card title="Observability" icon="chart-line">
+    Every run emits trace events, audit events, and a structured evidence packet. The evidence packet ties artifact records, provenance metadata, and approval decisions to a single `evidenceId`. Replace the observability sink through the BYO port while preserving redaction rules and evidence packet shape.
+  </Card>
+</CardGroup>
+
+## Replaceable BYO module ports
+
+The harness separates product semantics (owned by the harness) from infrastructure adapters (owned by you). Every port below is independently replaceable through the SDK's `createHarness()` options without weakening policy, audit, or evidence guarantees.
+
+| Port | SDK option | Current status | What you can bring |
+|---|---|---|---|
+| `byo_memory` | `memory` | Supported | No-op, local, or your own memory module. Citation, freshness, scope, and replay metadata are preserved. |
+| `byo_context` | `context` | Supported | Replace context assembly without changing run grammar. Context packs preserve inclusion reasons and deterministic hashes. |
+| `byo_search` | `search` | Supported | No-op or memory-backed adapter. Hosted and vector search remain unavailable in 0.1.x. |
+| `byo_store` | `checkpointStore` | Supported | In-memory or filesystem checkpoint stores. Hosted stores remain unavailable in 0.1.x. |
+| `byo_provider` | `provider` | Supported (local only) | The local deterministic provider is available. Hosted providers return a structured error until hosted provider support is released. |
+| `byo_policy` | `policyEngine` | Supported | Replace the policy engine without weakening default-deny or audit evidence requirements. |
+| `byo_tools` | `tools` | Supported (current adapters only) | Function tools and trusted MCP fixtures. OpenAPI, shell, browser, code, A2A, and remote MCP remain fail-closed. |
+| `byo_artifacts` | `artifactStore` | Supported | Replace artifact storage while preserving provenance, evidence refs, and artifact view projection. |
+| `byo_observability` | `observability` | Supported | Replace trace, audit, and evidence sinks while preserving redaction and evidence packet shape. |
+
+## Available packages
+
+The harness ships as a family of focused packages under the `@jami-studio` scope. You can install the SDK and CLI individually for most use cases, or add specific capability packages when you need fine-grained control.
+
+| Package | Purpose |
+|---|---|
+| `@jami-studio/harness-sdk` | Top-level developer API: `createHarness()`, run, resume, approve |
+| `@jami-studio/harness-cli` | `jami` CLI: init, run, inspect, approve, deny, doctor, verify |
+| `@jami-studio/harness-contracts` | Shared contracts, JSON Schema anchors, and compatibility fixtures |
+| `@jami-studio/harness-core` | Core composition layer for all runtime, policy, and adapter ports |
+| `@jami-studio/harness-policy` | Policy engine, approval workflows, identity, and audit spine |
+| `@jami-studio/harness-tools` | Tool registry, execution envelope, adapter manifests, and gateway |
+| `@jami-studio/harness-memory` | Memory, search, citation, permission filtering, and context replay |
+| `@jami-studio/harness-artifacts` | Artifact provenance records and replaceable storage port defaults |
+| `@jami-studio/harness-observability` | Trace, audit, and evidence packet export foundations |
+| `@jami-studio/harness-runtime` | Dependency-light run lifecycle and policy-gated emission kernel |
+| `@jami-studio/harness-store-local` | Local filesystem checkpoint store ports for runtime state |
+| `@jami-studio/harness-provider-local` | Local deterministic provider adapter for workflow execution |
+| `@jami-studio/harness-docs` | Deterministic docs, changelog, and evidence-index generator |
+| `@jami-studio/harness-workbench` | Dependency-free local static workbench for runtime evidence and system maps |

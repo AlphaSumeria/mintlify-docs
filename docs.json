@@ -1,0 +1,92 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "name": "Jami Harness",
+  "theme": "sequoia",
+  "colors": {
+    "primary": "#904513",
+    "light": "#e4cec5",
+    "dark": "#0a0c10"
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/run-lifecycle",
+              "concepts/policy-governance",
+              "concepts/tools-adapters",
+              "concepts/memory-context",
+              "concepts/artifacts-evidence"
+            ]
+          },
+          {
+            "group": "CLI",
+            "pages": [
+              "cli/overview",
+              "cli/commands",
+              "cli/configuration"
+            ]
+          },
+          {
+            "group": "SDK",
+            "pages": [
+              "sdk/overview",
+              "sdk/module-injection",
+              "sdk/checkpoint-resume",
+              "sdk/approvals"
+            ]
+          },
+          {
+            "group": "Packages",
+            "pages": [
+              "packages/contracts",
+              "packages/policy",
+              "packages/tools",
+              "packages/observability",
+              "packages/memory"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Reference",
+        "groups": [
+          {
+            "group": "Contract Schemas",
+            "pages": [
+              "reference/run-event",
+              "reference/tool-execution",
+              "reference/policy-decision",
+              "reference/artifact-record",
+              "reference/evidence-packet"
+            ]
+          },
+          {
+            "group": "Resources",
+            "pages": [
+              "reference/changelog",
+              "reference/faq"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/studio-jami/jami-harness"
+    }
+  }
+}

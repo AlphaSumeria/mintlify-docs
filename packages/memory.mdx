@@ -1,0 +1,150 @@
+---
+title: "Harness Memory Package: Agent Recall and Context Ports"
+sidebarTitle: "Memory Package"
+description: "Filter memory by actor and scope, assemble deterministic context packs, and swap in your own memory or search backend with @jami-studio/harness-memory."
+---
+
+`@jami-studio/harness-memory` provides the memory, search, citation, and context assembly layer for Jami Harness. It ships with no external dependencies — a no-op port for stateless runs, an in-memory development port for local iteration, and a deterministic context assembler that produces stable, replayable context packs from stored memory records. Every component is replaceable: bring your own memory store or search adapter by implementing the port interface.
+
+## Installation
+
+```bash
+npm install @jami-studio/harness-memory
+```
+
+**Package:** `@jami-studio/harness-memory` · **Version:** `0.1.0`
+
+## What the Package Provides
+
+<CardGroup cols={2}>
+  <Card title="No-op memory port" icon="ban">
+    For stateless runs that don't need recall. Satisfies the memory port interface without storing anything.
+  </Card>
+  <Card title="In-memory development port" icon="flask">
+    Stores and queries memory records in-process, with filtering by actor, project, scope, retention, and query content.
+  </Card>
+  <Card title="Search adapter ports" icon="magnifying-glass">
+    No-op and memory-backed search adapters. Replace either to plug in your own retrieval backend.
+  </Card>
+  <Card title="Context assembler" icon="layer-group">
+    Assembles `contextPack` records with token-budget drops, citation metadata, inclusion reasons, and deterministic replay hashes.
+  </Card>
+</CardGroup>
+
+## Using the In-Memory Port
+
+For development and testing, use `createInMemoryMemoryPort`. Pass it to `createHarness` via the `memory` option:
+
+```js
+import { createHarness } from '@jami-studio/harness-sdk';
+import { createInMemoryMemoryPort } from '@jami-studio/harness-memory';
+
+const harness = createHarness({
+  memory: createInMemoryMemoryPort({
+    actor: 'agent_writer',
+    project: 'my-project',
+    scope: 'session',
+  }),
+});
+```
+
+The in-memory port filters all recall queries by `actor`, `project`, and `scope`, so records from one agent or project are never visible to another in the same process.
+
+## Memory Record Structure
+
+Each `memoryRecord` stored and recalled by the port conforms to the `memoryRecord` schema anchor in `@jami-studio/harness-contracts`. Key fields include:
+
+<Accordion title="memoryRecord fields">
+
+| Field | Description |
+|---|---|
+| `actor` | The agent or user who owns this record |
+| `project` | The project this record is scoped to |
+| `scope` | The scope level (`session`, `project`, etc.) |
+| `content` | The stored content (redacted before persistence) |
+| `citationFreshness` | Freshness class for citation metadata |
+| `redaction` | The redaction policy applied to this record |
+
+</Accordion>
+
+## Context Pack Assembly
+
+The context assembler takes a set of memory records and produces a `contextPack` — a deterministic, replayable bundle of the most relevant context that fits within your token budget:
+
+```js
+import { createContextAssembler } from '@jami-studio/harness-memory';
+
+const assembler = createContextAssembler({ tokenBudget: 2000 });
+
+const pack = await assembler.assemble({
+  records: recalledMemoryRecords,
+  query: 'draft campaign email',
+  runId: 'run_draft_campaign',
+});
+
+console.log(pack.items);         // included memory records with citation metadata
+console.log(pack.droppedItems);  // records dropped due to token budget, with reasons
+console.log(pack.replayHash);    // deterministic hash for replay verification
+```
+
+### What contextPack contains
+
+Each assembled `contextPack` record includes:
+
+- **Assembled items** — memory records included in the context window, each with citation metadata and an inclusion reason
+- **Dropped items** — records excluded from the window, each with a drop reason (token budget, freshness, scope filter)
+- **Deterministic replay hash** — a stable hash of the assembly inputs so you can verify context is identical across replay runs
+
+## Bring Your Own Memory Port
+
+Implement the memory port interface and pass your implementation to `createHarness`:
+
+```js
+import { createHarness } from '@jami-studio/harness-sdk';
+
+const myMemoryPort = {
+  async store(record) { /* persist to your store */ },
+  async recall(query) { /* retrieve from your store */ },
+};
+
+const harness = createHarness({
+  memory: myMemoryPort,
+});
+```
+
+## Bring Your Own Search Adapter
+
+Replace the search adapter independently of the memory port. Implement the search adapter interface and pass it to `createHarness`:
+
+```js
+import { createHarness } from '@jami-studio/harness-sdk';
+
+const mySearchAdapter = {
+  async search(query, options) { /* query your vector store or search index */ },
+};
+
+const harness = createHarness({
+  search: mySearchAdapter,
+});
+```
+
+## Not Yet Implemented
+
+The following capabilities are planned but not yet available in this version:
+
+- Durable memory store (database-backed persistence)
+- Vector search and semantic retrieval
+- Hosted retrieval backends
+- Memory compression and summarization
+- External RAG provider runtime
+- Policy-engine integration for memory access control
+- Recall quality evaluations
+
+<Note>
+  Hosted and vector search remain unavailable in this release. Use the no-op port for stateless runs or the in-memory port for local development and testing. When hosted retrieval ships, you will be able to swap the port without changing your harness configuration structure.
+</Note>
+
+## Further Reading
+
+- [`@jami-studio/harness-contracts`](/packages/contracts) — the `memoryRecord` and `contextPack` schema anchors that define the memory record and context pack structures
+- [`@jami-studio/harness-observability`](/packages/observability) — pair with observability sinks to capture evidence packets that reference context packs

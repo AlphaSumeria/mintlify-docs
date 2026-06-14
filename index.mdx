@@ -1,0 +1,67 @@
+---
+title: "Jami Harness: Agent SDK with Governed Action Runtime"
+sidebarTitle: "Home"
+description: "Jami Harness is a provider-agnostic agent SDK and governed action runtime with clear contracts, durable artifact trails, and replaceable module ports."
+---
+
+Jami Harness (`@jami-studio/harness`) is the provider-agnostic agent SDK and governed action runtime built for developers who need power without chaos. It gives every agent run clear contracts, policy-gated tool access, durable artifact trails, readable traces, and replaceable module ports — so you can build, inspect, govern, and improve real software work without being locked into any single provider or infrastructure choice.
+
+<CardGroup cols={2}>
+  <Card title="Introduction" icon="book-open" href="/introduction">
+    Learn what Jami Harness is, how it works, and which problems it solves for agent developers.
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Install the SDK and CLI, initialize a project, and run your first governed agent in five minutes.
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/cli/overview">
+    Explore every `jami` command: init, run, inspect, approve, deny, doctor, and more.
+  </Card>
+  <Card title="SDK Reference" icon="code" href="/sdk/overview">
+    Use `createHarness()` to run, resume, approve, and inject replacement modules from TypeScript or JavaScript.
+  </Card>
+</CardGroup>
+
+## Get started in three steps
+
+<Steps>
+  <Step title="Install">
+    Add the SDK and CLI to your project with your preferred package manager.
+
+    ```bash
+    npm install @jami-studio/harness-sdk @jami-studio/harness-cli
+    ```
+  </Step>
+  <Step title="Initialize">
+    Run `jami init` inside your project directory to create the local harness configuration.
+
+    ```bash
+    jami init --json
+    ```
+  </Step>
+  <Step title="Run your first agent">
+    Execute your first governed run. The harness applies policy, records evidence, and exports a durable artifact — all locally.
+
+    ```js
+    import { createHarness } from '@jami-studio/harness-sdk';
+
+    const harness = createHarness();
+    const result = await harness.run({ runId: 'run_local_example' });
+
+    console.log(result.evidence.evidenceId);
+    ```
+  </Step>
+</Steps>
+
+## Key capabilities
+
+<CardGroup cols={3}>
+  <Card title="Governed by default" icon="shield-check">
+    Every tool call passes through a default-deny policy engine. Actions require explicit approval before they execute, and every decision is recorded as audit evidence.
+  </Card>
+  <Card title="Replaceable module ports" icon="puzzle-piece">
+    Swap out memory, context, search, storage, provider, policy, tools, artifacts, or observability without changing your run grammar or losing evidence continuity.
+  </Card>
+  <Card title="Durable artifact trails" icon="box-archive">
+    Every run produces a structured evidence packet: artifact records, trace events, approval decisions, and provenance metadata — all tied to a single `evidenceId`.
+  </Card>
+</CardGroup>

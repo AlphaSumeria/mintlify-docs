@@ -1,0 +1,161 @@
+---
+title: "Jami Harness Quickstart: Run Your First Governed Agent"
+sidebarTitle: "Quickstart"
+description: "Install the Jami Harness SDK and CLI, initialize your project, and run your first policy-gated agent with a durable evidence packet in under five minutes."
+---
+
+This guide walks you through installing Jami Harness, initializing a local project, running your first governed agent, and inspecting the evidence it produces. By the end you will have a working local harness run with a policy-gated tool call, a checkpoint, and a structured evidence packet tied to a single `evidenceId`.
+
+<Steps>
+  <Step title="Check prerequisites">
+    Jami Harness requires a recent Node.js release and pnpm. Verify your versions before installing:
+
+    ```bash
+    node --version   # must be >= 24.0.0
+    pnpm --version   # must be >= 10.0.0
+    ```
+
+    <Note>
+      The harness uses native Node.js ESM throughout. Node.js 24 or later is required. If you are using npm or yarn instead of pnpm, those work fine for installing the published packages — the pnpm version requirement applies only when working from a source checkout of the repository.
+    </Note>
+  </Step>
+
+  <Step title="Install the SDK and CLI">
+    Install both packages into your project. The CLI provides the `jami` command; the SDK provides the `createHarness()` API.
+
+    <CodeGroup>
+      ```bash npm
+      npm install @jami-studio/harness-sdk @jami-studio/harness-cli
+      ```
+
+      ```bash pnpm
+      pnpm add @jami-studio/harness-sdk @jami-studio/harness-cli
+      ```
+
+      ```bash yarn
+      yarn add @jami-studio/harness-sdk @jami-studio/harness-cli
+      ```
+    </CodeGroup>
+
+    <Tip>
+      If you want the complete source-checked local foundation instead of the published packages, clone the repo and run `pnpm install --frozen-lockfile` from the repo root. See the [Installation](/installation) page for the full package list and source checkout path.
+    </Tip>
+  </Step>
+
+  <Step title="Initialize your project">
+    Run `jami init` inside your project directory. This creates the `.jami-harness/harness.json` configuration file idempotently — safe to run multiple times.
+
+    ```bash
+    jami init --json
+    ```
+
+    Expected output:
+
+    ```json
+    {
+      "command": "init",
+      "status": "ok",
+      "configPath": ".jami-harness/harness.json",
+      "created": true
+    }
+    ```
+
+    <Note>
+      If `.jami-harness/harness.json` already exists, `jami init --json` reports `"created": false` and exits cleanly without overwriting your configuration.
+    </Note>
+  </Step>
+
+  <Step title="Run your first agent">
+    Create a file called `run.mjs` and paste in the following. This creates a harness, executes the local deterministic provider workflow through the policy-gated tool gateway, writes a checkpoint, and exports a durable evidence packet.
+
+    ```js
+    import { createHarness } from '@jami-studio/harness-sdk';
+
+    const harness = createHarness();
+    const result = await harness.run({ runId: 'run_local_example' });
+
+    console.log(result.evidence.evidenceId);
+    ```
+
+    Run it:
+
+    ```bash
+    node run.mjs
+    ```
+
+    You will see the `evidenceId` for your run printed to stdout. The harness also writes run evidence under `.jami-harness/runs/run_local_example/` and a redacted checkpoint under `.jami-harness/checkpoints/`.
+
+    Alternatively, you can run the same local workflow directly from the CLI without writing a script file:
+
+    ```bash
+    jami run --json
+    ```
+
+    The CLI produces the same structured JSON evidence output and exits with code `0` on success.
+
+    For a more detailed output view, use the extended example that logs the full result shape. You can also pass `providerId` to target a specific provider, and `sourceRepo`, `sourceCommit`, and `sourceRef` to record provenance metadata in the evidence packet:
+
+    ```js
+    import { createHarness } from '@jami-studio/harness-sdk';
+
+    const harness = createHarness();
+    const result = await harness.run({
+      runId: 'run_local_example',
+      providerId: 'provider_local',
+      sourceRepo: 'my-project',
+      sourceCommit: 'working-tree',
+      sourceRef: 'refs/heads/main',
+    });
+
+    console.log(JSON.stringify({
+      runId: result.runId,
+      status: result.status,
+      evidenceId: result.evidence.evidenceId,
+      artifactId: result.artifact.artifactId,
+      providerStatus: result.providerResult.status,
+      toolExecutionStatuses: result.toolExecutions.map((e) => e.status),
+      traceCount: result.traces.length,
+      metricCount: result.metrics.length,
+    }, null, 2));
+    ```
+
+    Expected output shape:
+
+    ```json
+    {
+      "runId": "run_local_example",
+      "status": "completed",
+      "evidenceId": "evidence_...",
+      "artifactId": "artifact_...",
+      "providerStatus": "completed",
+      "toolExecutionStatuses": ["approved"],
+      "traceCount": 4,
+      "metricCount": 4
+    }
+    ```
+  </Step>
+
+  <Step title="Inspect run results">
+    Use `jami inspect` to view the latest run evidence, checkpoint state, approvals, and active module capabilities without reading raw files.
+
+    ```bash
+    jami inspect --json
+    ```
+
+    The output reports the run's evidence packet, checkpoint replay hash, approval records, and the full active module capability matrix — including which BYO ports are wired and which remain on their defaults.
+  </Step>
+</Steps>
+
+## Next steps
+
+<CardGroup cols={3}>
+  <Card title="CLI Overview" icon="terminal" href="/cli/overview">
+    Explore the full `jami` command surface: approve, deny, resume, cancel, tools, doctor, verify, and more.
+  </Card>
+  <Card title="SDK Overview" icon="code" href="/sdk/overview">
+    Learn how to inject replacement modules, read artifacts, inspect traces, and use the full SDK API.
+  </Card>
+  <Card title="Run Lifecycle" icon="rotate" href="/concepts/run-lifecycle">
+    Understand how a harness run moves through policy, tool execution, evidence export, and checkpointing.
+  </Card>
+</CardGroup>

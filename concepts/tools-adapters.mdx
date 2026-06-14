@@ -1,0 +1,134 @@
+---
+title: "Tools and Adapters in Jami Harness: What Agents Execute"
+sidebarTitle: "Tools & Adapters"
+description: "Explore the Jami Harness tool gateway: register function tools, review supported adapters, and see which adapters are intentionally fail-closed today."
+---
+
+The Jami Harness tool gateway (`@jami-studio/harness-tools`) is the single point through which every agent action executes. It provides a registry for declaring tools, a policy-gated execution envelope that wraps every call in trace, audit, and evidence output, and a strict adapter model that makes clear exactly what can and cannot run. Nothing reaches a tool handler without passing through the policy engine first.
+
+## What the Tool Gateway Provides
+
+When you register a tool, you describe it with a `toolId`, an `adapterId`, a risk label, and the scopes it requires. The gateway enforces those declarations at execution time:
+
+- **Risk labels** (`low`, `write`, `external`, `secret_adjacent`) inform the policy engine how cautious to be.
+- **Scopes** gate which actors can invoke the tool at all.
+- **Timeouts** bound how long a handler may run before the harness cancels it.
+- **Capability manifests** record what the adapter can and cannot do — including explicit declarations for unsupported surfaces.
+- **Source-lock inspection** verifies that first-party and trusted MCP fixture tools have verified source provenance before registration.
+
+Every execution — whether it succeeds, is denied, or is invoked on an unsupported adapter — produces a **`toolExecution` record** containing the policy decision, trace span, audit ref, evidence ref, artifact ref, and redaction metadata. Denied executions never invoke handlers.
+
+## Supported Adapter Types
+
+Jami Harness currently supports two adapter paths.
+
+<CardGroup cols={2}>
+  <Card title="Function tools" icon="function">
+    **First-party, fully supported.** Register a JavaScript function directly. The gateway handles policy gating, timeout/cancellation, trace, and evidence automatically. Inputs and results are redacted before evidence and artifact output.
+  </Card>
+  <Card title="Trusted MCP fixture tools" icon="plug">
+    **MCP 2025-11-25 protocol, in-process, trusted fixtures only.** The gateway validates current repo-local MCP source-lock evidence, accepts metadata only from trusted fixture servers, and maps `initialize`, `tools/list`, and `tools/call` through the same execution envelope. Poisoned tool metadata is rejected before registration.
+  </Card>
+</CardGroup>
+
+## Registering a Function Tool
+
+Call `createToolRegistry()` and register your tool with a handler, risk label, and required scopes. The registry validates your declaration immediately and produces a source-lock record for the function path.
+
+```js
+import { createToolRegistry } from '@jami-studio/harness-tools';
+
+const registry = createToolRegistry();
+
+registry.register({
+  toolId: 'tool_greet',
+  adapterId: 'function',
+  riskLabel: 'low',
+  scopes: ['greet'],
+  handler: async (input) => ({ message: `Hello, ${input.name}!` }),
+});
+```
+
+To use the registry with the full harness, pass it via the `tools` SDK option:
+
+```js
+import { createHarness } from '@jami-studio/harness-sdk';
+
+const harness = createHarness({ tools: registry });
+```
+
+## Inspecting Available Tools
+
+Run the following command to list all registered tools, their adapter types, risk labels, scopes, and current adapter capability state:
+
+```bash
+jami tools --json
+```
+
+The output is structured JSON you can pipe to other tools. Each entry corresponds to a registered tool and its full capability manifest.
+
+For programmatic inspection, use the two built-in helpers:
+
+```js
+import {
+  listToolAdapterCapabilities,
+  listToolAdapterSourceLocks,
+} from '@jami-studio/harness-tools';
+
+// Returns per-adapter capability manifests (supported / unsupported / fail-closed)
+const capabilities = listToolAdapterCapabilities();
+
+// Returns source-lock evidence for supported adapters and
+// missing-source-lock evidence for unsupported ones
+const sourceLocks = listToolAdapterSourceLocks();
+```
+
+## Unsupported Adapters (Fail-Closed)
+
+The following adapter types are **explicitly unsupported** today. Registering or invoking them does not silently fail — the gateway produces a full typed `toolExecution` record with unsupported evidence, a denial audit event, and a trace span. You get complete observability even on blocked paths.
+
+<Warning>
+  These adapters are fail-closed by design. Do not attempt workarounds. Each has an explicit unsupported manifest that records why it is unavailable and what evidence is missing.
+</Warning>
+
+| Adapter | Why unavailable |
+|---|---|
+| **OpenAPI** | No source-lock or schema-pin evidence for remote HTTP APIs |
+| **Shell** | No sandboxing, provenance, or safe cancellation path |
+| **Browser** | No renderer isolation or interaction safety model |
+| **Code runner** | No sandboxed execution environment |
+| **Provider-as-tool** | No hosted provider runtime available yet |
+| **A2A (agent-to-agent)** | No interop endpoint or trust model in place |
+
+Use `dryRunUnsupportedAdapter()` to generate typed evidence for any of these paths without invoking any external system. This is useful for auditing what your agent _would_ have attempted:
+
+```js
+import { dryRunUnsupportedAdapter } from '@jami-studio/harness-tools';
+
+const evidence = await dryRunUnsupportedAdapter({
+  adapterId: 'openapi',
+  toolId: 'tool_some_api',
+  input: { endpoint: 'https://example.com/api' },
+});
+
+// evidence.commandResult === 'unsupported'
+// Full trace, audit, and artifact records are still produced
+console.log(evidence.commandResult);
+```
+
+## What a toolExecution Record Contains
+
+Every tool invocation — successful or blocked — produces a `toolExecution` record. The record includes:
+
+- **Policy decision** — the `allow`, `deny`, or `needs_approval` result with scopes and reasons
+- **Trace span** — start time, end time, status, and redacted attributes
+- **Audit ref** — a reference to the associated audit event
+- **Evidence ref** — a reference to the evidence packet for this execution
+- **Artifact ref** — a reference to any artifact produced by the tool
+- **Redaction metadata** — which fields were omitted and why
+
+Inputs and results are redacted before they appear in trace, evidence, and artifact output. Raw values never appear in the audit trail.
+
+<Info>
+  MCP support is intentionally narrow. The supported path covers trusted in-process fixture discovery and `tools/call` mapping only. **Stdio subprocess transport, remote Streamable HTTP transport, OAuth, MCP resources, prompts, roots, sampling, elicitation, tasks, and resumability are all unsupported and named as such in the MCP capability manifest.** Direct `adapter_mcp` tool registration (outside the trusted fixture discovery helper) also fails closed as unsupported evidence.
+</Info>

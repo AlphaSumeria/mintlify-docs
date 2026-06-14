@@ -1,0 +1,174 @@
+---
+title: "Jami Harness SDK: Run Governed Agents Programmatically"
+sidebarTitle: "SDK Overview"
+description: "Use @jami-studio/harness-sdk to create governed agent runs, export evidence packets, manage checkpoints, and inject your own modules from one API."
+---
+
+The Jami Harness SDK gives you a single programmatic entry point for everything the Harness runtime does: creating runs, exporting evidence, gating tool execution through policy, persisting checkpoints, handling approvals, and inspecting active module capabilities. You bring the run ID; the SDK handles the rest of the lifecycle.
+
+## Installation
+
+Install the SDK and the local checkpoint store from npm:
+
+```bash
+npm install @jami-studio/harness-sdk @jami-studio/harness-store-local
+```
+
+## Your First Run
+
+`createHarness()` composes the runtime lifecycle kernel, policy engine, local deterministic provider, tool gateway, artifact store, observability, memory, context, search, and checkpoint store into one developer object. Call `harness.run()` with a run ID and await the result.
+
+```js
+import { createHarness } from '@jami-studio/harness-sdk';
+
+const harness = createHarness();
+const result = await harness.run({ runId: 'run_local_example' });
+
+console.log(result.evidence.evidenceId);
+```
+
+You can also pass source provenance fields so every evidence packet is traceable back to the exact commit that produced it:
+
+```js
+import { createHarness } from '@jami-studio/harness-sdk';
+
+const harness = createHarness();
+const result = await harness.run({
+  runId: 'run_example_local',
+  sourceRepo: 'jami-harness',
+  sourceCommit: 'working-tree',
+  sourceRef: 'refs/heads/main',
+});
+
+console.log(JSON.stringify({
+  runId: result.runId,
+  status: result.status,
+  evidenceId: result.evidence.evidenceId,
+  artifactId: result.artifact.artifactId,
+  providerStatus: result.providerResult.status,
+  toolExecutionStatuses: result.toolExecutions.map((execution) => execution.status),
+  traceCount: result.traces.length,
+  metricCount: result.metrics.length,
+}, null, 2));
+```
+
+## harness.run() Parameters
+
+<ParamField path="runId" type="string" required>
+  A unique identifier for this run. Must match the pattern `run_[a-z0-9][a-z0-9_-]*`. Malformed IDs are rejected before any artifacts or evidence are written.
+</ParamField>
+
+<ParamField path="providerId" type="string">
+  The provider to use for this run. Defaults to the local deterministic provider. Hosted providers (OpenAI, Anthropic, Google, etc.) are not yet supported and fail closed.
+</ParamField>
+
+<ParamField path="providerFailureMode" type="string">
+  Controls how the provider behaves when it encounters a failure. Pass `'fail_once'` to exercise recovery fixtures locally.
+</ParamField>
+
+<ParamField path="sourceRepo" type="string">
+  The name of the source repository to record in the evidence packet for provenance.
+</ParamField>
+
+<ParamField path="sourceCommit" type="string">
+  The commit hash or label (e.g. `'working-tree'`) to record in the evidence packet.
+</ParamField>
+
+<ParamField path="sourceRef" type="string">
+  The Git ref (e.g. `'refs/heads/main'`) to record in the evidence packet.
+</ParamField>
+
+## What harness.run() Returns
+
+Every call to `harness.run()` resolves to a result object with the following top-level fields:
+
+<ResponseField name="status" type="string">
+  The terminal status of the run: `'completed'`, `'approval_required'`, `'unsupported'`, or an error status.
+</ResponseField>
+
+<ResponseField name="evidence" type="object">
+  A structured evidence packet containing `evidenceId`, event records, trace references, and audit entries. Every decision the runtime makes is captured here.
+</ResponseField>
+
+<ResponseField name="providerResult" type="object">
+  The result from the provider, including `providerId`, `status`, and an `evidenceRef` linking back to the run evidence.
+</ResponseField>
+
+<ResponseField name="toolExecutions" type="array">
+  An array of policy-gated tool execution records. Each entry includes `toolId`, `status`, `evidenceRef`, and `artifactRef`.
+</ResponseField>
+
+<ResponseField name="checkpoint" type="object">
+  A redacted run snapshot containing `checkpointId`, `replayHash`, and `status`. Use this to resume runs or verify replay integrity. See [Checkpoints and Resume](/sdk/checkpoint-resume) for details.
+</ResponseField>
+
+<ResponseField name="artifact" type="object">
+  The primary artifact record for this run, containing `artifactId` and provenance references.
+</ResponseField>
+
+<ResponseField name="traces" type="array">
+  All trace records emitted during the run.
+</ResponseField>
+
+<ResponseField name="audits" type="array">
+  All audit records emitted during the run.
+</ResponseField>
+
+<ResponseField name="metrics" type="array">
+  Observability metric records including run latency, estimated tokens, external-billable cost, and tool-call counts. The local deterministic provider always records `0` external billable cost.
+</ResponseField>
+
+## Full SDK Control Surface
+
+`createHarness()` exposes the following methods. Use `harness.inspect()` or `jami map --json` to see which are active in your environment.
+
+| Method | Purpose |
+|---|---|
+| `harness.run(input)` | Start a new governed agent run |
+| `harness.resume(runId)` | Read checkpoint state and report whether a run is resumable |
+| `harness.approve(input)` | Record an approval decision for a pending action |
+| `harness.deny(input)` | Record a denial decision, terminating the run |
+| `harness.cancel(input)` | Fail-closed unsupported — returns `unsupported` status |
+| `harness.retry(input)` | Fail-closed unsupported — returns `unsupported` status |
+| `harness.inspect()` | Return the active module and control-surface capability map |
+| `harness.readArtifact(artifactId)` | Read a single artifact record by ID |
+| `harness.readArtifacts()` | List all artifact records from the current run store |
+| `harness.readTraces()` | List all trace records from the current observability surface |
+| `harness.readMetrics()` | List all observability metric records |
+
+<Note>
+  `cancel`, `retry`, and `migration` are fail-closed unsupported surfaces. `harness.cancel()` and `harness.retry()` return an `unsupported` status immediately. Do not build control flows that depend on them today. `migration` is a CLI-only reporting command — there is no SDK equivalent yet.
+</Note>
+
+## Current Capabilities
+
+| Capability | Status |
+|---|---|
+| Local run through runtime lifecycle kernel | ✓ Supported |
+| Evidence packet export | ✓ Supported |
+| Local deterministic provider workflow | ✓ Supported |
+| Policy-gated tool gateway | ✓ Supported |
+| Redacted checkpoints with replay hashes | ✓ Supported |
+| Resume from checkpoint | ✓ Supported |
+| Approve / deny actions | ✓ Supported |
+| Module capability inspection | ✓ Supported |
+| BYO module injection | ✓ Supported |
+| OpenAI / Anthropic / Google hosted providers | ✗ Not yet supported |
+| Cancellation orchestration | ✗ Not yet supported |
+| Manual retry orchestration | ✗ Not yet supported |
+| Checkpoint / store migrations | ✗ Not yet supported |
+| Hosted control plane | ✗ Not yet supported |
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Module Injection" icon="plug" href="/sdk/module-injection">
+    Replace any SDK port — memory, policy, tools, and more — without changing the run grammar.
+  </Card>
+  <Card title="Checkpoints" icon="floppy-disk" href="/sdk/checkpoint-resume">
+    Persist run state and resume from exactly where you left off.
+  </Card>
+  <Card title="Approvals" icon="user-check" href="/sdk/approvals">
+    Gate elevated-risk actions behind a human approval step.
+  </Card>
+</CardGroup>

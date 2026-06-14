@@ -1,0 +1,101 @@
+---
+title: "Harness Observability: Traces, Metrics, and Evidence"
+sidebarTitle: "Observability"
+description: "Capture trace events, local metrics, and evidence packets from Jami Harness runs with @jami-studio/harness-observability and no external dependencies."
+---
+
+`@jami-studio/harness-observability` connects to the Jami Harness run-event spine and captures trace records, audit events, local metrics, and evidence packets for every run. The package is dependency-free — it runs locally without any external telemetry service, and applies default redaction to prompts, inline secrets, credentials, private payloads, and tool metadata before anything leaves the runtime.
+
+## Installation
+
+```bash
+npm install @jami-studio/harness-observability
+```
+
+**Package:** `@jami-studio/harness-observability` · **Version:** `0.1.0`
+
+## What the Package Provides
+
+<CardGroup cols={2}>
+  <Card title="Event and audit sinks" icon="database">
+    Connect to the runtime run-event spine to capture every `runEvent` and `auditEvent` emitted during a run.
+  </Card>
+  <Card title="Trace records" icon="route">
+    `traceEvent` records with redacted input/output attributes — inputs, results, and metadata are redacted before capture.
+  </Card>
+  <Card title="Local metric capture" icon="chart-bar">
+    `metricRecord` capture for latency, token estimates, external billable cost, and tool-call counts with redacted dimensions.
+  </Card>
+  <Card title="Evidence packet export" icon="file-check">
+    Local evidence packet export backed by the artifact storage port, with metric-summary artifacts referenced by each packet.
+  </Card>
+</CardGroup>
+
+### Default Redaction
+
+The package applies default redaction to the following categories before any record is written:
+
+- Prompts and prompt fragments
+- Inline secrets and credentials
+- Private payloads
+- Tool metadata
+
+You do not need to configure redaction separately — it is applied at the sink level for every captured record.
+
+## Metric Types
+
+Every run captures four local metric types:
+
+| Metric | Unit | Notes |
+|---|---|---|
+| Latency | Milliseconds | Wall-clock duration of each tool call and run segment |
+| Token estimates | Token count | Estimated input/output tokens for local provider calls |
+| External billable cost | Currency | Always `0` for the local deterministic provider |
+| Tool-call count | Integer | Number of tool calls made per run |
+
+<Note>
+  The local deterministic provider records `0` external billable cost. It does not estimate hardware, labor, or hosted-provider spend. When you connect a hosted provider, cost recording behavior depends on that provider's implementation.
+</Note>
+
+## Evidence Packets
+
+Every `evidencePacket` ties a generated claim to its full provenance chain:
+
+- **Source** — where the data originated
+- **Command** — what produced it (or why the command was unavailable)
+- **Artifact** — the stored artifact record
+- **Freshness class** — `deterministic_current_source_tree` or similar
+- **Contract** — the schema anchor that validates the record
+- **Redaction evidence** — which redaction policy was applied
+
+## Wiring a Custom Observability Sink
+
+By default, Harness captures events and audit records locally. To route them to your own telemetry backend, pass `onEvent` and `onAudit` callbacks when creating the harness:
+
+```js
+import { createHarness } from '@jami-studio/harness-sdk';
+
+const harness = createHarness({
+  observability: {
+    onEvent: (event) => myTelemetrySink.record(event),
+    onAudit: (audit) => myAuditLog.append(audit),
+  },
+});
+```
+
+Both callbacks receive fully typed records that conform to the `traceEvent` and `auditEvent` contract anchors in `@jami-studio/harness-contracts`. Redaction has already been applied before your callbacks receive the records.
+
+## Not Yet Implemented
+
+The following capabilities are planned but not yet available in this version:
+
+- OpenTelemetry export
+- Hosted observability sinks
+- External eval backends
+- Incident exports
+- CLI inspection commands
+- Workbench views for trace and metric data
+
+<Tip>
+  Until hosted sinks are available, wire `onEvent` and `onAudit` to your own logging infrastructure using the custom sink pattern above. The typed records are stable and conform to the contracts package schemas.
+</Tip>

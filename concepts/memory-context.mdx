@@ -1,0 +1,150 @@
+---
+title: "Memory and Context Assembly in Jami Harness Agent Runs"
+sidebarTitle: "Memory & Context"
+description: "Explore how Jami Harness scopes memory to actors and projects, assembles cited context packs within a token budget, and supports replaceable memory ports."
+---
+
+Agent runs need access to prior knowledge without leaking that knowledge across actors or projects. Jami Harness manages this through a **memory port** that stores and retrieves scoped records, and a **context assembler** that packages those records into a deterministic `contextPack` for each run. You can use the built-in in-memory development port, keep things fully stateless with the no-op port, or inject your own memory module behind the harness seam.
+
+## What Memory Provides
+
+The memory layer (`@jami-studio/harness-memory`) gives you:
+
+- **Recall and write policy** — every memory record carries a scope that limits which actors and projects can read it. The assembler enforces these permissions before including a record in a context pack.
+- **Actor and project scoping** — records are always bound to an `actorId` and `projectId`. Cross-actor reads are rejected, not silently dropped.
+- **Citation metadata** — every included record carries a `citationId` and a `freshnessClass` so the agent can attribute claims to their source.
+- **Retention policy** — records declare how long they are valid and a `forgetAfter` timestamp.
+- **Redaction defaults** — records carry a `redactionClass` and a list of redacted fields so sensitive content is never accidentally surfaced.
+
+## Default Memory Modes
+
+<Tabs>
+  <Tab title="No-op (stateless)">
+    The default mode for new harness instances. Every read returns empty results; every write is discarded. Use this for runs that do not need persistent context, for CI pipelines, or anywhere you want a guarantee that no memory crosses run boundaries.
+
+    ```js
+    import { createHarness } from '@jami-studio/harness-sdk';
+
+    // No memory option = no-op port (stateless)
+    const harness = createHarness();
+    ```
+  </Tab>
+  <Tab title="In-memory development port">
+    A fully functional memory port that stores records in process. It supports actor scoping, project scoping, scope-based permission filtering, retention policies, query filtering, and freshness tracking. Use it during development and testing.
+
+    ```js
+    import { createHarness } from '@jami-studio/harness-sdk';
+    import { createInMemoryMemoryPort } from '@jami-studio/harness-memory';
+
+    const harness = createHarness({
+      memory: createInMemoryMemoryPort(),
+    });
+    ```
+
+    Stored records honour all the same permission checks as a production memory backend. Records written with `actorId: 'actor_alice'` are invisible to runs executing as `actor_bob`.
+  </Tab>
+</Tabs>
+
+<Note>
+  Hosted and vector-search–backed memory stores are not available today. Use the no-op or in-memory-backed adapters for all current development. The `byo_search` port is available for replacement, but hosted retrieval, compression, summarisation, and external RAG provider runtimes remain unimplemented.
+</Note>
+
+## Context Assembly and the contextPack
+
+Before each run step that needs prior knowledge, the harness assembles a **`contextPack`**. A context pack is an ordered list of memory records that fit within a token budget, annotated with inclusion reasons and dropped-item reasons, and stamped with a **deterministic replay hash**.
+
+```json
+{
+  "contextPackId": "ctx_my_task_foundation",
+  "runId": "run_my_task",
+  "assembledAt": "2026-06-09T12:00:00.000Z",
+  "deterministicHash": "sha256:...",
+  "items": [
+    {
+      "sourceRef": "mem_contract_note",
+      "kind": "retrieved",
+      "priority": 10,
+      "inclusionReason": "permission and query matched",
+      "citationId": "cit_contract_note",
+      "freshnessClass": "current_run",
+      "tokenEstimate": 10
+    }
+  ],
+  "droppedItems": [
+    {
+      "sourceRef": "mem_secret_adjacent_note",
+      "reason": "permission_denied"
+    }
+  ]
+}
+```
+
+Key properties of a context pack:
+
+- **`deterministicHash`** — the same set of records assembled under the same conditions always produces the same hash, enabling safe checkpoint replay.
+- **`inclusionReason`** — tells you exactly why each record was included (e.g. `"permission and query matched"`).
+- **`droppedItems`** with reasons — tells you exactly why records were excluded (`permission_denied`, `token_budget_exceeded`, `stale`, etc.). Nothing is silently omitted.
+- **Token budget enforcement** — the assembler drops lower-priority records when the token budget is exhausted, starting from the lowest-priority items.
+
+## Memory Record Shape
+
+Each record in the memory store contains:
+
+- **`memoryId`** — unique record identifier
+- **`kind`** — whether the record is a project note, a run artifact reference, etc.
+- **`scope`** — `projectId`, `allowedActorIds`, and `allowedScopes` that gate access
+- **`freshness`** — a `class` (such as `current_run`) and an `asOf` timestamp
+- **`retention`** — policy and `forgetAfter` timestamp
+- **`citation`** — `citationId` and `label` for attribution in generated output
+- **`redaction`** — classification and a list of redacted fields
+
+## Bringing Your Own Memory Port
+
+Replace the entire memory module by passing it to `createHarness()`. Your implementation must honour the same permission, scoping, and citation contracts the harness expects — but you are free to back it with any storage technology.
+
+```js
+import { createHarness } from '@jami-studio/harness-sdk';
+import myMemoryModule from './my-memory';
+
+const harness = createHarness({ memory: myMemoryModule });
+```
+
+## Bringing Your Own Search Port
+
+The search adapter is separately replaceable. Swap in a custom search implementation while keeping the memory port, context assembler, and recall quality contracts intact:
+
+```js
+import { createHarness } from '@jami-studio/harness-sdk';
+import mySearchAdapter from './my-search';
+
+const harness = createHarness({ search: mySearchAdapter });
+```
+
+The harness verifies that your search adapter preserves citation freshness and per-actor isolation. Hosted vector search, external RAG providers, and semantic retrieval remain unavailable today.
+
+## Replacing the Context Assembler
+
+If you need to control how records are ranked, filtered, or serialised before being handed to the provider, replace the context assembler port:
+
+```js
+import { createHarness } from '@jami-studio/harness-sdk';
+import myContextAssembler from './my-context';
+
+const harness = createHarness({ context: myContextAssembler });
+```
+
+Your assembler receives the raw candidate records after permission filtering and must return a `contextPack` with all required fields — including `deterministicHash`, `items` with `inclusionReason`, and `droppedItems` with reasons. The run grammar does not change.
+
+## Inspecting Memory and Context
+
+Use the CLI to inspect the current memory capability and the most recently assembled context pack:
+
+```bash
+# Report memory adapter capability and status
+jami memory --json
+
+# Show the last assembled context pack for a run
+jami context --json
+```
+
+Both commands emit structured JSON you can pipe to other tools or log to your observability system.

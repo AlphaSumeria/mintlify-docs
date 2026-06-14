@@ -1,0 +1,203 @@
+---
+title: "Jami Harness FAQ: Setup, Providers, Tools, and Modules"
+sidebarTitle: "FAQ"
+description: "Answers to common questions about installing and running Jami Harness, covering providers, tools, secrets, policy gates, and BYO module injection."
+---
+
+Jami Harness is a provider-agnostic agent SDK and governed action runtime. The questions below cover the scenarios developers ask about most often — from getting your first run working to replacing internal modules with your own implementations. If you do not find what you need here, open a discussion on [GitHub](https://github.com/studio-jami/jami-harness).
+
+---
+
+## Getting Started
+
+<Accordion title="What is the minimum Node.js version required?">
+  You need **Node.js ≥ 24.0.0** and **pnpm ≥ 10.0.0**. Both are checked during `jami doctor --json`. Older Node versions are not tested and are not supported.
+</Accordion>
+
+<Accordion title="Which providers does Jami Harness support today?">
+  The **local deterministic provider** (`provider_local_deterministic`) is the only currently supported provider. It runs entirely without external API calls and is designed for development and testing — you get full run lifecycle, policy gating, checkpoints, and evidence without any hosted credentials.
+
+  Hosted providers (OpenAI, Anthropic, Google, and others) are **fail-closed**. Passing `--provider-id provider_openai` to `jami run` returns `ok: false` with a nonzero exit code and writes fail-closed evidence, but makes no external API call. These providers will remain fail-closed until their auth controls, policy fixtures, redaction coverage, and adapter implementations are complete.
+</Accordion>
+
+<Accordion title="Can I use Jami Harness without installing all packages?">
+  Yes. Install only `@jami-studio/harness-sdk` and `@jami-studio/harness-cli` for a minimal setup:
+
+  ```bash
+  npm install @jami-studio/harness-cli@0.1.1 @jami-studio/harness-sdk@0.1.1
+  ```
+
+  Additional packages (`@jami-studio/harness-memory`, `@jami-studio/harness-tools`, `@jami-studio/harness-policy`, etc.) can be added as needed. Every module has a replaceable port — you can inject your own implementation instead of installing the default package.
+</Accordion>
+
+---
+
+## Run Lifecycle
+
+<Accordion title="What run ID format is required?">
+  Run IDs must match the pattern `run_[a-z0-9][a-z0-9_-]*`. Examples of valid IDs:
+
+  - `run_my_task`
+  - `run_1a2b3c`
+  - `run_batch-2026-06`
+
+  Malformed IDs are **rejected before any filesystem reads or writes** — you receive a structured JSON error immediately. The same validation applies to artifact IDs and evidence IDs.
+</Accordion>
+
+<Accordion title="What happens when a run needs approval?">
+  The run pauses with a status of `approval_required`. You have two options to resume:
+
+  - **Approve:** `jami approve --json --run-id <runId> --action-id <actionId>` or `harness.approve({ runId, actionId })` in the SDK.
+  - **Deny:** `jami deny --json --run-id <runId> --action-id <actionId>` or `harness.deny({ runId, actionId })`.
+
+  Both paths record a local approval decision through the checkpoint store and produce typed approval evidence.
+</Accordion>
+
+<Accordion title="Can I resume a failed run?">
+  Yes. Use `jami resume --json --run-id <runId>` from the CLI, or call `harness.resume({ runId })` in the SDK. The checkpoint stores redacted run state with a deterministic replay hash that lets you verify the resumed run state matches the original.
+
+  <Note>
+    Cancellation (`jami cancel`) and manual retry orchestration (`jami retry`) are currently **fail-closed unsupported** surfaces. They report their status in JSON with a nonzero exit code but do not modify run state until the runtime backing for those operations exists.
+  </Note>
+</Accordion>
+
+---
+
+## Tools and Policy
+
+<Accordion title="Why is my tool execution returning an 'unsupported' result?">
+  Certain adapter types are **explicitly fail-closed** by design. If your tool registration matches one of the following adapter categories, the gateway produces typed unsupported evidence but does not execute the handler:
+
+  - OpenAPI adapters
+  - Shell adapters
+  - Browser adapters
+  - Code execution adapters
+  - Provider-as-tool adapters
+  - Agent-to-agent (A2A) adapters
+
+  Use **function tools** or **trusted in-process MCP fixture adapters** instead. You can inspect which adapters are currently supported by running `jami tools --json`.
+</Accordion>
+
+<Accordion title="Can I use MCP tools with Jami Harness?">
+  Yes, with restrictions. Jami Harness supports MCP protocol version **2025-11-25** for **trusted in-process fixture servers only**. The adapter maps `initialize`, `tools/list`, and `tools/call` through the policy-gated tool envelope and rejects poisoned metadata and unsupported protocol versions.
+
+  The following MCP surfaces are **not yet supported** and produce fail-closed records:
+
+  - Stdio subprocess transport
+  - Remote Streamable HTTP transport
+  - OAuth
+  - The full MCP SDK (resources, prompts, roots, sampling, elicitation, tasks, and resumability)
+
+  <Warning>
+    Direct MCP-shaped tool registrations that are not produced by the trusted in-process fixture adapter fail closed as unsupported. The gateway still emits typed execution, trace, evidence, and artifact records for these attempts.
+  </Warning>
+</Accordion>
+
+<Accordion title="How do I bring my own policy engine?">
+  Pass a custom `policyEngine` option to `createHarness()`:
+
+  ```js
+  import { createHarness } from "@jami-studio/harness-sdk";
+
+  const harness = createHarness({
+    policyEngine: {
+      evaluate(request) {
+        // your policy logic here
+        return { decision: "allow", evidence: { ... } };
+      },
+    },
+  });
+  ```
+
+  Your engine must:
+
+  1. Implement the `evaluate(request)` method as defined by the policy port contract.
+  2. **Not weaken** the default-deny baseline — every action request must produce a decision.
+  3. **Always emit audit evidence** — omitting evidence generation makes the run unverifiable.
+
+  Run `jami inspect --json` after setup to confirm the policy port reports your module as active.
+</Accordion>
+
+---
+
+## Security and Secrets
+
+<Accordion title="How are secrets handled?">
+  Secrets are **never serialized** to run state, checkpoints, or evidence packets. Agents work with `secretRef` objects that carry only reference metadata (an identifier and scope) — never the secret value itself.
+
+  Before a checkpoint is written to the filesystem, the harness redacts:
+
+  - Prompts
+  - Secrets and credentials
+  - Tokens and bearer strings
+  - Private payloads
+
+  The redacted checkpoint still carries a deterministic replay hash so you can verify state continuity without re-exposing sensitive values.
+</Accordion>
+
+<Accordion title="What is an evidence packet and why does it matter?">
+  An evidence packet ties every generated claim — a doc, a report, a policy decision, a tool result — to its **source**, **command**, **artifact**, **freshness class**, and **redaction policy**. This chain of custody lets you verify that any output is traceable to its source record.
+
+  Evidence packets are emitted automatically during run execution. You can read them from the run output or inspect them with `jami inspect --json`. The evidence packet shape is governed by `@jami-studio/harness-contracts` and validated as part of every release.
+
+  <Tip>
+    Evidence packets are the ground truth for compliance and audit. If you replace a module (memory, observability, artifacts), confirm that your replacement preserves the evidence packet shape — the contracts validation suite will catch regressions.
+  </Tip>
+</Accordion>
+
+---
+
+## BYO Modules
+
+<Accordion title="Can I replace the memory module?">
+  Yes. Pass your custom memory implementation via `createHarness({ memory: yourMemoryModule })`. Your module must expose the required port methods for citation, freshness, scope, and replay metadata.
+
+  ```js
+  import { createHarness } from "@jami-studio/harness-sdk";
+
+  const harness = createHarness({
+    memory: yourMemoryModule,
+  });
+  ```
+
+  <Note>
+    Vector search and hosted retrieval are **not yet supported**. Use a no-op, in-memory, or locally-backed adapter today. The `byo_search` port is also injectable via `createHarness({ search: yourSearchModule })` for the same reason.
+  </Note>
+</Accordion>
+
+<Accordion title="Can I use my own checkpoint store?">
+  Yes. You have two options:
+
+  1. **Use the built-in filesystem store** from `@jami-studio/harness-store-local`:
+
+     ```js
+     import { createHarness } from "@jami-studio/harness-sdk";
+     import { createFileSystemCheckpointStore } from "@jami-studio/harness-store-local";
+
+     const harness = createHarness({
+       checkpointStore: createFileSystemCheckpointStore({ basePath: "./.jami-harness/checkpoints" }),
+     });
+     ```
+
+  2. **Implement the checkpoint store port interface** and pass it directly to `createHarness({ checkpointStore })`. Your implementation must preserve redaction behavior and replay hash generation — the store port contract in `@jami-studio/harness-contracts` defines the required shape.
+
+  Hosted durable stores are **fail-closed unsupported** until database adapter, credential management, migration, and replay evidence exist.
+</Accordion>
+
+<Accordion title="What other modules can I replace?">
+  Every major runtime concern has a replaceable port. The table below shows the available injection points:
+
+  | Module | SDK option | Notes |
+  |---|---|---|
+  | Memory | `memory` | Citation, freshness, scope, and replay metadata required |
+  | Context assembly | `context` | Context packs preserve inclusion reasons and deterministic hashes |
+  | Search | `search` | No-op or memory-backed today; hosted/vector search unavailable |
+  | Checkpoint store | `checkpointStore` | In-memory or filesystem today; hosted stores unavailable |
+  | Provider | `provider` | Local deterministic only; hosted providers fail closed |
+  | Policy engine | `policyEngine` | Must not weaken default-deny or omit audit evidence |
+  | Tools | `tools` | Function tools and trusted MCP fixtures supported |
+  | Artifact store | `artifactStore` | Preserve provenance, evidence refs, and artifact view projection |
+  | Observability | `observability` | Preserve redaction and evidence packet shape |
+
+  Run `jami map --json` to see the current capability status of every installed module.
+</Accordion>

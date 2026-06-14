@@ -1,0 +1,207 @@
+---
+title: "artifactRecord Schema: Provenance-Rich Agent Output"
+sidebarTitle: "artifactRecord"
+description: "artifactRecord ties agent output to its run, source commit, and evidence chain. Learn storage modes, redaction, and the artifactView display projection."
+---
+
+The `artifactRecord` schema represents any discrete output a Jami Harness run produces — a report, patch, document, image, trace log, evidence packet, release packet, memory snapshot, or context pack. What distinguishes it from a generic file record is provenance: every artifact is bound at creation time to the run that produced it, the source repository and commit it was derived from, the evidence packet that validated that work, the trace span that observed it, and the audit events that authorized it. This chain of provenance lets you reconstruct the exact circumstances under which any artifact was created without querying internal runtime state.
+
+<Info>
+  **Schema ID:** `https://jami.studio/schemas/harness/artifact-record.schema.json`
+  — version `2026-06-09`
+</Info>
+
+## Artifact kinds
+
+<CardGroup cols={3}>
+  <Card title="report" icon="file-lines">
+    Structured output produced by an analysis or evaluation run.
+  </Card>
+  <Card title="patch" icon="code-merge">
+    A diff or changeset proposed or applied by the agent.
+  </Card>
+  <Card title="document" icon="file">
+    Prose output such as generated documentation or summaries.
+  </Card>
+  <Card title="image" icon="image">
+    Binary image output.
+  </Card>
+  <Card title="trace" icon="chart-line">
+    A trace log exported from the observability pipeline.
+  </Card>
+  <Card title="evidence" icon="shield-halved">
+    An evidence packet exported as a standalone artifact.
+  </Card>
+  <Card title="release_packet" icon="box">
+    A versioned bundle of artifacts ready for promotion.
+  </Card>
+  <Card title="memory_snapshot" icon="database">
+    A point-in-time snapshot of agent memory state.
+  </Card>
+  <Card title="context_pack" icon="layer-group">
+    A packaged context state for cross-run continuity.
+  </Card>
+</CardGroup>
+
+## Promotion states
+
+An artifact moves through a lifecycle from creation to final disposition. The `promotionState` field tracks where in that lifecycle the record currently sits.
+
+| State | Meaning |
+|---|---|
+| `draft` | Freshly created; not yet reviewed |
+| `reviewed` | A human or automated reviewer has examined the artifact |
+| `accepted` | The artifact has been approved for use |
+| `rejected` | The artifact was rejected and should not be promoted |
+| `promoted` | The artifact has been published or deployed |
+
+## Schema fields
+
+<ResponseField name="schemaVersion" type="string" required>
+  Always `"2026-06-09"`. The harness rejects records with any other value.
+</ResponseField>
+
+<ResponseField name="artifactId" type="string" required>
+  Unique identifier for this artifact. Must match `^art_[a-z0-9][a-z0-9_-]*$`.
+</ResponseField>
+
+<ResponseField name="kind" type="string (enum)" required>
+  Category of artifact. One of: `report`, `patch`, `document`, `image`, `trace`, `evidence`, `release_packet`, `memory_snapshot`, `context_pack`.
+</ResponseField>
+
+<ResponseField name="title" type="string">
+  Optional human-readable title for display in the Studio UI artifact viewer.
+</ResponseField>
+
+<ResponseField name="promotionState" type="string (enum)" required>
+  Current lifecycle state. One of: `draft`, `reviewed`, `accepted`, `rejected`, `promoted`.
+</ResponseField>
+
+<ResponseField name="provenance" type="object" required>
+  The complete provenance chain binding this artifact to the run, source, and audit history that produced it.
+
+  <Expandable title="provenance fields">
+    <ResponseField name="runId" type="string" required>
+      The run that produced this artifact. Must match `^run_[a-z0-9][a-z0-9_-]*$`.
+    </ResponseField>
+    <ResponseField name="sourceRepo" type="string" required>
+      Name or identifier of the source repository.
+    </ResponseField>
+    <ResponseField name="sourceCommit" type="string" required>
+      Commit SHA or working-tree marker at the time the artifact was created. Use `"working-tree"` for uncommitted work.
+    </ResponseField>
+    <ResponseField name="sourceRef" type="string" required>
+      Git ref (branch, tag, or path) associated with the source commit.
+    </ResponseField>
+    <ResponseField name="evidenceRef" type="string" required>
+      Reference to the `evidencePacket` that validates the work this artifact represents. Must match `^ev_[a-z0-9][a-z0-9_-]*$`.
+    </ResponseField>
+    <ResponseField name="createdAt" type="string (date-time)" required>
+      ISO 8601 timestamp of when the artifact was created.
+    </ResponseField>
+    <ResponseField name="commandRef" type="string">
+      Optional reference to the specific command invocation that produced this artifact.
+    </ResponseField>
+    <ResponseField name="traceRef" type="string">
+      Reference to the trace record for the span that created this artifact. Must match `^trc_[a-z0-9][a-z0-9_-]*$`.
+    </ResponseField>
+    <ResponseField name="auditRefs" type="array of string">
+      References to `auditEvent` records that authorized actions leading to this artifact. Each entry must match `^aud_[a-z0-9][a-z0-9_-]*$`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="storage" type="object" required>
+  Describes where and how the artifact payload is stored. The harness never embeds raw artifact payloads in the record itself.
+
+  <Expandable title="storage fields">
+    <ResponseField name="mode" type="string (enum)" required>
+      Storage backend. One of: `memory` (in-process memory port), `local_port` (local filesystem port), `external_port` (external storage service).
+    </ResponseField>
+    <ResponseField name="locator" type="string" required>
+      URI or path used to retrieve the artifact from the chosen storage backend. For example: `"memory://art_my_run_evidence"`.
+    </ResponseField>
+    <ResponseField name="contentHash" type="string">
+      Optional content hash of the stored artifact for integrity verification, e.g. `"sha256:abc123..."`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="redaction" type="object" required>
+  Controls how the artifact's payload is handled in display and export contexts.
+
+  <Expandable title="redaction fields">
+    <ResponseField name="classification" type="string (enum)" required>
+      Sensitivity classification of the artifact's content. One of: `public`, `internal`, `private`, `secret_adjacent`.
+    </ResponseField>
+    <ResponseField name="privatePayloadPolicy" type="string (enum)" required>
+      Default policy applied to the artifact payload in the `artifactView` projection and any export. One of: `none` (payload accessible), `redacted` (payload content replaced), `omitted` (payload absent from the view).
+    </ResponseField>
+    <ResponseField name="redactedFields" type="array of string">
+      Field paths that were individually redacted within the payload. Empty when `privatePayloadPolicy` is `none` or `omitted`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## The artifactView projection
+
+The harness exposes a separate `artifactView` schema for display surfaces. An `artifactView` carries the artifact's metadata — `kind`, `title`, `promotionState`, `availabilityState`, renderer hints, and provenance — without exposing the stored payload. Studio UI components consume `artifactView` records via `artifactViewRef` pointers emitted in `runEvent` records. This separation ensures that rendering an artifact in the UI never requires direct access to potentially sensitive payload content.
+
+<Note>
+  The `artifactView` schema is defined at `https://jami.studio/schemas/harness/artifact-view.schema.json`. `artifactRecord` and `artifactView` share an `artifactId` but are distinct records with different responsibilities.
+</Note>
+
+An `artifactView` carries an `availabilityState` that tells the renderer whether the artifact can be displayed:
+
+| State | Meaning |
+|---|---|
+| `available` | Artifact is present and renderable |
+| `unsupported_kind` | Renderer does not support this artifact kind |
+| `missing_artifact` | Artifact record does not exist |
+| `stale_artifact` | Artifact evidence is no longer fresh |
+| `redacted_artifact` | Artifact is present but payload is redacted |
+| `denied_artifact` | Access to the artifact was denied by policy |
+
+## Example
+
+```json Valid artifact record (evidence kind)
+{
+  "schemaVersion": "2026-06-09",
+  "artifactId": "art_my_run_evidence",
+  "kind": "evidence",
+  "title": "Agent run evidence packet",
+  "promotionState": "draft",
+  "provenance": {
+    "runId": "run_my_task_example",
+    "sourceRepo": "jami-harness",
+    "sourceCommit": "working-tree",
+    "sourceRef": "refs/heads/main",
+    "evidenceRef": "ev_my_run_evidence",
+    "createdAt": "2026-06-09T12:00:00.000Z",
+    "traceRef": "trc_my_run",
+    "auditRefs": ["aud_my_run"]
+  },
+  "storage": {
+    "mode": "memory",
+    "locator": "memory://art_my_run_evidence",
+    "contentHash": "sha256:fixture"
+  },
+  "redaction": {
+    "classification": "private",
+    "privatePayloadPolicy": "redacted",
+    "redactedFields": []
+  }
+}
+```
+
+## Validation invariants
+
+<Warning>
+  The harness enforces these rules before writing any artifact record to the store.
+</Warning>
+
+- All six provenance sub-fields (`runId`, `sourceRepo`, `sourceCommit`, `sourceRef`, `evidenceRef`, `createdAt`) are **required**. An artifact without a complete provenance chain is invalid.
+- `redaction` must be fully specified. You cannot omit `classification` or `privatePayloadPolicy` — both are required even when classification is `public` and policy is `none`.
+- The `privatePayloadPolicy` default is `"redacted"` for `internal` and `private` classifications. Your integration should explicitly opt into `"none"` rather than relying on an absent field.
+- `artifactId` must be prefixed `art_`. References from other records (such as `toolExecution.artifactRef`) use this identifier to resolve the record.
+- `contentHash` is optional but strongly recommended for `local_port` and `external_port` storage modes to enable integrity verification at retrieval time.

@@ -1,0 +1,148 @@
+---
+title: "BYO Modules: Replace SDK Ports Without Breaking Contracts"
+sidebarTitle: "Module Injection"
+description: "Swap any Harness SDK port — memory, context, search, store, provider, policy, tools, artifacts, or observability — without changing the run grammar."
+---
+
+Every functional boundary in the Jami Harness SDK is exposed as a replaceable port. You can swap the memory module, checkpoint store, policy engine, observability sink, or any other surface by passing your own implementation to `createHarness()`. The run grammar — `harness.run()`, `harness.resume()`, `harness.approve()` — stays identical regardless of which modules you inject.
+
+## How Module Injection Works
+
+Pass your replacement modules as named options to `createHarness()`. The SDK wires them into the runtime lifecycle at composition time. Modules you do not supply fall back to the SDK defaults.
+
+```js
+import { createHarness } from '@jami-studio/harness-sdk';
+import { createFileSystemCheckpointStore } from '@jami-studio/harness-store-local';
+
+const harness = createHarness({
+  checkpointStore: createFileSystemCheckpointStore({ root: './.my-checkpoints' }),
+});
+
+const result = await harness.run({ runId: 'run_my_task' });
+```
+
+## Available Ports
+
+Every port has a stable SDK option name, a current status, and an evidence boundary that defines what the port is responsible for preserving.
+
+| Port | SDK option | Status | Evidence boundary |
+|---|---|---|---|
+| `byo_memory` | `memory` | `supported_port` | Use no-op, local, or user-owned memory modules while preserving citation, freshness, scope, and replay metadata. |
+| `byo_context` | `context` | `supported_port` | Replace context assembly without changing run grammar; context packs preserve inclusion reasons and deterministic hashes. |
+| `byo_search` | `search` | `supported_port` | Use the no-op or memory-backed adapter today; hosted/vector search remains unavailable. |
+| `byo_store` | `checkpointStore` | `supported_port` | Use in-memory or filesystem checkpoint stores today; hosted stores remain unavailable. |
+| `byo_provider` | `provider` | `supported_port_local_only` | The local deterministic provider is supported; hosted providers fail closed until source-lock, auth, redaction, policy, trace, and adapter fixtures land. |
+| `byo_policy` | `policyEngine` | `supported_port` | Replace the policy engine behind the harness seam without weakening default-deny and audit evidence requirements. |
+| `byo_tools` | `tools` | `supported_port_current_adapters_only` | Function tools and trusted MCP fixtures are supported; OpenAPI, shell, browser, code, provider-as-tool, A2A, stdio MCP, and remote MCP remain fail-closed unsupported surfaces. |
+| `byo_artifacts` | `artifactStore` | `supported_port` | Replace artifact storage while preserving provenance, evidence refs, and artifact view projection. |
+| `byo_observability` | `observability` | `supported_port` | Replace trace/audit/evidence sinks while preserving redaction and evidence packet shape. |
+| `byo_docs_output` | `docsOutput` | `repo_generator_supported_sdk_output_unavailable` | Repo-level docs generation is supported via `pnpm docs:generate`; SDK docs-output injection and hosted docs publishing remain unavailable. |
+
+## Injection Examples
+
+<Accordion title="Custom checkpoint store">
+  The filesystem checkpoint store from `@jami-studio/harness-store-local` is the recommended replacement for the default in-memory store when you need persistence across process restarts.
+
+  ```js
+  import { createHarness } from '@jami-studio/harness-sdk';
+  import { createFileSystemCheckpointStore } from '@jami-studio/harness-store-local';
+
+  const harness = createHarness({
+    checkpointStore: createFileSystemCheckpointStore({ root: './.jami-harness' }),
+  });
+
+  const result = await harness.run({ runId: 'run_my_task' });
+  console.log(result.checkpoint.checkpointId);
+  ```
+</Accordion>
+
+<Accordion title="Custom memory module">
+  Replace the default no-op memory adapter with your own implementation. Your module must preserve citation, freshness, scope, and replay metadata through its port interface.
+
+  ```js
+  import { createHarness } from '@jami-studio/harness-sdk';
+
+  const myMemory = {
+    // Implement the required memory port methods
+    store: async (entry) => { /* ... */ },
+    recall: async (query) => { /* ... */ },
+    // ...
+  };
+
+  const harness = createHarness({ memory: myMemory });
+  const result = await harness.run({ runId: 'run_with_memory' });
+  ```
+</Accordion>
+
+<Accordion title="Custom observability sink">
+  Replace the default local trace and audit sinks with your own observability backend. Your implementation must preserve the redaction contract and evidence packet shape.
+
+  ```js
+  import { createHarness } from '@jami-studio/harness-sdk';
+
+  const myObservability = {
+    emit: (event) => {
+      // Forward to your own tracing backend
+      myTracingBackend.record(event);
+    },
+  };
+
+  const harness = createHarness({ observability: myObservability });
+  const result = await harness.run({ runId: 'run_with_obs' });
+  ```
+</Accordion>
+
+<Accordion title="Custom artifact store">
+  Provide your own artifact store to redirect where run artifacts are written. Your implementation must preserve provenance, evidence refs, and the artifact view projection.
+
+  ```js
+  import { createHarness } from '@jami-studio/harness-sdk';
+
+  const myArtifactStore = {
+    write: async (artifact) => { /* ... */ },
+    read: async (artifactId) => { /* ... */ },
+  };
+
+  const harness = createHarness({ artifactStore: myArtifactStore });
+  const result = await harness.run({ runId: 'run_with_artifacts' });
+  ```
+</Accordion>
+
+## Port Contract Requirements
+
+Every injected module must implement the methods its port requires. The SDK validates port shape at composition time and will throw a `HarnessInputError` if a required method is missing.
+
+Key rules across all ports:
+
+- **Preserve the evidence shape.** Modules that emit or consume evidence must not drop, reorder, or modify structured evidence fields.
+- **Respect redaction.** Modules that handle run state (stores, observability) must not persist prompts, secrets, credentials, tokens, or private payload fields.
+- **Fail closed on unsupported surfaces.** If your replacement module does not support a given adapter or route, return an explicit `unsupported` status rather than silently degrading.
+
+<Warning>
+  Replacing the policy engine with `policyEngine` must not weaken the default-deny posture or remove audit evidence requirements. The harness policy port is a seam for customization, not a bypass. Any replacement engine is still required to record approval, denial, and elevation decisions as structured audit evidence.
+</Warning>
+
+## Verifying Active Modules
+
+Use `harness.inspect()` programmatically or the `jami map --json` CLI command to see which modules are active and which optional surfaces are missing in your environment.
+
+<CodeGroup>
+  ```js SDK
+  import { createHarness } from '@jami-studio/harness-sdk';
+
+  const harness = createHarness();
+  const inspection = harness.inspect();
+
+  console.log(JSON.stringify(inspection.modules, null, 2));
+  ```
+
+  ```bash CLI
+  jami map --json
+  ```
+</CodeGroup>
+
+The output lists each module by name, its availability status, and any `unavailableReasons` that explain why an optional surface is missing. Use `jami doctor --json` for a human-readable summary of missing optional capabilities and suggested next steps.
+
+<Tip>
+  Run `jami inspect --json` after injecting a custom module to confirm the SDK picked it up and the capability state reflects your replacement.
+</Tip>

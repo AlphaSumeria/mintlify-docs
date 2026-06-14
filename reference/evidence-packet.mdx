@@ -1,0 +1,197 @@
+---
+title: "evidencePacket Schema: Verifiable Claims and Provenance"
+sidebarTitle: "evidencePacket"
+description: "evidencePacket ties every claim to a source commit, command results, and freshness class — a verifiable, redaction-aware provenance record for outputs."
+---
+
+The `evidencePacket` schema answers the question: "how do you know this claim is true?" Every time the Jami Harness generates output — running contracts validation, producing an artifact, completing a tool call, or evaluating a policy — it creates or links an evidence packet that records the source repository and commit, the commands that were run and whether they passed, any artifacts that were produced, the freshness class that describes how current the evidence is, the contracts the packet was generated under, and the redaction state that governs what can be shared downstream. Policy decisions, tool executions, and artifact records all reference evidence packets by ID rather than embedding the evidence inline, so the provenance chain stays intact across the system.
+
+<Info>
+  **Schema ID:** `https://jami.studio/schemas/harness/evidence-packet.schema.json`
+  — version `2026-06-09`
+</Info>
+
+## Freshness classes
+
+The `freshnessClass` field tells consumers how to interpret the age and stability of the evidence. Choose the class that most accurately reflects the conditions under which the evidence was collected.
+
+<CardGroup cols={2}>
+  <Card title="current_run" icon="bolt">
+    Evidence was collected during the current run. This is the strongest freshness guarantee — commands ran against the live working state.
+  </Card>
+  <Card title="same_day" icon="calendar-day">
+    Evidence was collected earlier today but not during this specific run. Suitable for cached results from recent CI runs.
+  </Card>
+  <Card title="source_locked" icon="lock">
+    Evidence was collected at a specific commit and is considered stable as long as that commit has not changed. Equivalent to `deterministic_current_source_tree` in the generated reference.
+  </Card>
+  <Card title="stale" icon="triangle-exclamation">
+    Evidence is older than the same-day window or was collected at a commit that may no longer reflect current source state. Treat with caution.
+  </Card>
+</CardGroup>
+
+<Note>
+  The generated API reference uses the label `deterministic_current_source_tree` to describe evidence collected at a locked commit — this corresponds to the `source_locked` freshness class in the schema.
+</Note>
+
+## Schema fields
+
+<ResponseField name="schemaVersion" type="string" required>
+  Always `"2026-06-09"`. The harness rejects records with any other value.
+</ResponseField>
+
+<ResponseField name="evidenceId" type="string" required>
+  Unique identifier for this evidence packet. Must match `^ev_[a-z0-9][a-z0-9_-]*$`.
+</ResponseField>
+
+<ResponseField name="subject" type="string" required>
+  Human-readable description of what this evidence proves. Displayed in audit and observability UIs.
+</ResponseField>
+
+<ResponseField name="freshnessClass" type="string (enum)" required>
+  How current and stable the evidence is. One of: `current_run`, `same_day`, `source_locked`, `stale`.
+</ResponseField>
+
+<ResponseField name="source" type="object" required>
+  The source repository state at the time the evidence was collected.
+
+  <Expandable title="source fields">
+    <ResponseField name="repo" type="string" required>
+      Name or identifier of the source repository.
+    </ResponseField>
+    <ResponseField name="commit" type="string" required>
+      Commit SHA or `"working-tree"` when evidence was collected from uncommitted state.
+    </ResponseField>
+    <ResponseField name="ref" type="string" required>
+      Git ref (branch name, tag, or path) associated with the commit.
+    </ResponseField>
+    <ResponseField name="recordedAt" type="string (date-time)" required>
+      ISO 8601 timestamp of when the source state was recorded.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="commands" type="array of object" required>
+  The commands that were executed to produce or verify this evidence. Must contain at least one entry — a packet with an empty `commands` array is invalid.
+
+  <Expandable title="command entry fields">
+    <ResponseField name="command" type="string" required>
+      The exact command string that was run, e.g. `"jami inspect --json"`.
+    </ResponseField>
+    <ResponseField name="status" type="string (enum)" required>
+      Outcome of the command. One of: `passed`, `failed`, `unavailable`, `not_run`.
+    </ResponseField>
+    <ResponseField name="recordedAt" type="string (date-time)" required>
+      ISO 8601 timestamp of when the command result was recorded.
+    </ResponseField>
+    <ResponseField name="evidenceRef" type="string">
+      Optional self-referential or nested evidence reference for commands that produced their own evidence packets.
+    </ResponseField>
+    <ResponseField name="unavailableReason" type="string">
+      Required when `status` is `unavailable`. Explains why the command could not be run (e.g., the tool is not installed in the current environment).
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="artifacts" type="array of object" required>
+  Artifacts produced or consumed by the commands in this evidence packet. May be an empty array when no artifacts were produced.
+
+  <Expandable title="artifact entry fields">
+    <ResponseField name="artifactId" type="string" required>
+      Reference to the `artifactRecord` for this artifact. Must match `^art_[a-z0-9][a-z0-9_-]*$`.
+    </ResponseField>
+    <ResponseField name="path" type="string" required>
+      Path to the artifact relative to the source repository root.
+    </ResponseField>
+    <ResponseField name="kind" type="string (enum)" required>
+      Category of artifact. One of: `schema`, `fixture`, `generated_reference`, `report`, `log`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="redaction" type="object" required>
+  Controls what the evidence packet reveals about potentially sensitive content it references.
+
+  <Expandable title="redaction fields">
+    <ResponseField name="containsSecrets" type="boolean" required>
+      Whether this packet references or was derived from secret-adjacent material. When `true`, `privatePayloadPolicy` must be `"redacted"` or `"omitted"` — a packet that admits to containing secrets but uses `"none"` fails validation.
+    </ResponseField>
+    <ResponseField name="privatePayloadPolicy" type="string (enum)" required>
+      How sensitive content in the packet is handled. One of: `none`, `redacted`, `omitted`.
+    </ResponseField>
+    <ResponseField name="notes" type="string">
+      Optional human-readable explanation of the redaction decisions made for this packet.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="acceptedContracts" type="array of object" required>
+  The contracts this evidence packet was generated under. Must contain at least one entry. Consumers use this to verify that the evidence was produced against a known contract version.
+
+  <Expandable title="contract entry fields">
+    <ResponseField name="name" type="string" required>
+      Contract anchor name, e.g. `"evidencePacket"` or `"runEvent"`.
+    </ResponseField>
+    <ResponseField name="version" type="string" required>
+      Schema version string, e.g. `"2026-06-09"`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Example
+
+```json Valid evidence packet
+{
+  "schemaVersion": "2026-06-09",
+  "evidenceId": "ev_my_run_evidence",
+  "subject": "Agent run output and inspection",
+  "freshnessClass": "current_run",
+  "source": {
+    "repo": "my-project",
+    "commit": "working-tree",
+    "ref": "refs/heads/main",
+    "recordedAt": "2026-06-09T12:00:00.000Z"
+  },
+  "commands": [
+    {
+      "command": "jami inspect --json",
+      "status": "passed",
+      "recordedAt": "2026-06-09T12:00:00.000Z",
+      "evidenceRef": "ev_my_run_evidence"
+    }
+  ],
+  "artifacts": [
+    {
+      "artifactId": "art_my_run_output",
+      "path": "output/run-summary.json",
+      "kind": "report"
+    }
+  ],
+  "redaction": {
+    "containsSecrets": false,
+    "privatePayloadPolicy": "none"
+  },
+  "acceptedContracts": [
+    {
+      "name": "evidencePacket",
+      "version": "2026-06-09"
+    },
+    {
+      "name": "runEvent",
+      "version": "2026-06-09"
+    }
+  ]
+}
+```
+
+## Validation invariants
+
+<Warning>
+  The harness enforces these invariants at schema boundary. Invalid packets are rejected and the claim they would support is not recorded.
+</Warning>
+
+- **`commands` must contain at least one entry.** An evidence packet with an empty `commands` array cannot support any generated claim and fails schema validation. If you cannot run the relevant command in the current environment, add an entry with `status: "unavailable"` and explain why in `unavailableReason`.
+- **Unavailable commands must explain why.** Any command entry with `status: "unavailable"` must include a non-empty `unavailableReason`. Omitting the reason for an unavailable command is invalid.
+- **Packets with secret-adjacent content must include a redaction policy.** When `redaction.containsSecrets` is `true`, `redaction.privatePayloadPolicy` must be `"redacted"` or `"omitted"`. Using `"none"` on a secrets-bearing packet fails validation.
+- **`acceptedContracts` must contain at least one entry.** An evidence packet that declares no accepted contracts provides no verifiable contract alignment for downstream consumers.
+- **`evidenceId` must be prefixed `ev_`.** References from `toolExecution.evidenceRef`, `policyDecision.evidenceRef`, and `artifactRecord.provenance.evidenceRef` all use this prefix to resolve the packet.

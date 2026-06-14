@@ -1,0 +1,162 @@
+---
+title: "Harness Contracts: JSON Schema Anchor Reference Guide"
+sidebarTitle: "Contracts"
+description: "Explore the 20 JSON Schema anchors in @jami-studio/harness-contracts that define the harness/Studio UI boundary, generated artifacts, and validation rules."
+---
+
+`@jami-studio/harness-contracts` is the machine-readable foundation of Jami Harness. It defines JSON Schema anchors and compatibility fixtures for every data structure the harness may emit or consume at the harness/Studio UI boundary — covering policy decisions, tool executions, memory records, evidence packets, and more. Nothing in this package owns Studio UI primitives, renderer implementation, or token outputs; it is purely a contract layer that both sides of the boundary read from.
+
+## Installation
+
+```bash
+npm install @jami-studio/harness-contracts
+```
+
+**Package:** `@jami-studio/harness-contracts` · **Version:** `0.1.0`
+
+## Contract Anchors
+
+All 20 anchors ship with schema IDs that follow the pattern `https://jami.studio/schemas/harness/<anchor-name>.schema.json`.
+
+<Info>
+  Schema IDs follow the pattern `https://jami.studio/schemas/harness/<anchor>.schema.json`. Use the schema ID — not the file path — as the stable reference in validators and OpenAPI `$ref` values.
+</Info>
+
+<Accordion title="View all 20 contract anchors">
+
+| Anchor | Schema ID |
+|---|---|
+| `actionRef` | `https://jami.studio/schemas/harness/action-ref.schema.json` |
+| `approvalRequest` | `https://jami.studio/schemas/harness/approval-request.schema.json` |
+| `artifactRecord` | `https://jami.studio/schemas/harness/artifact-record.schema.json` |
+| `artifactView` | `https://jami.studio/schemas/harness/artifact-view.schema.json` |
+| `auditEvent` | `https://jami.studio/schemas/harness/audit-event.schema.json` |
+| `capabilityManifest` | `https://jami.studio/schemas/harness/capability-manifest.schema.json` |
+| `contextPack` | `https://jami.studio/schemas/harness/context-pack.schema.json` |
+| `evidencePacket` | `https://jami.studio/schemas/harness/evidence-packet.schema.json` |
+| `memoryRecord` | `https://jami.studio/schemas/harness/memory-record.schema.json` |
+| `metricRecord` | `https://jami.studio/schemas/harness/metric-record.schema.json` |
+| `policyDecision` | `https://jami.studio/schemas/harness/policy-decision.schema.json` |
+| `primitiveManifest` | `https://jami.studio/schemas/harness/primitive-manifest.schema.json` |
+| `runEvent` | `https://jami.studio/schemas/harness/run-event.schema.json` |
+| `secretRef` | `https://jami.studio/schemas/harness/secret-ref.schema.json` |
+| `suiteRef` | `https://jami.studio/schemas/harness/suite-ref.schema.json` |
+| `themeRef` | `https://jami.studio/schemas/harness/theme-ref.schema.json` |
+| `threatModelFixtureCatalog` | `https://jami.studio/schemas/harness/threat-model-fixture-catalog.schema.json` |
+| `toolExecution` | `https://jami.studio/schemas/harness/tool-execution.schema.json` |
+| `traceEvent` | `https://jami.studio/schemas/harness/trace-event.schema.json` |
+| `uiPayload` | `https://jami.studio/schemas/harness/ui-payload.schema.json` |
+
+</Accordion>
+
+Each anchor covers a distinct responsibility at the harness/Studio UI boundary:
+
+<CardGroup cols={2}>
+  <Card title="Run & Execution" icon="play">
+    `runEvent`, `toolExecution`, `actionRef` — harness run timeline events, policy-gated tool execution envelopes, and UI action handles.
+  </Card>
+  <Card title="Policy & Audit" icon="shield">
+    `policyDecision`, `approvalRequest`, `auditEvent`, `secretRef` — default-deny decisions, approval lifecycle, audit records, and scoped secret references.
+  </Card>
+  <Card title="Evidence & Artifacts" icon="file-check">
+    `evidencePacket`, `artifactRecord`, `artifactView` — sourced evidence, artifact storage records, and render-intent metadata.
+  </Card>
+  <Card title="Memory & Context" icon="brain">
+    `memoryRecord`, `contextPack` — agent memory records and assembled context packs with deterministic replay hashes.
+  </Card>
+  <Card title="Observability" icon="chart-line">
+    `traceEvent`, `metricRecord` — redacted trace records and local metric capture.
+  </Card>
+  <Card title="Capabilities & UI" icon="puzzle">
+    `capabilityManifest`, `primitiveManifest`, `uiPayload`, `artifactView`, `themeRef`, `suiteRef`, `threatModelFixtureCatalog` — harness and primitive vocabularies, render payloads, theme and suite references, and risk-to-fixture catalogs.
+  </Card>
+</CardGroup>
+
+## Generated Artifacts
+
+The package ships three pre-built artifacts under `generated/` that you consume directly — no build step required on your end:
+
+<CardGroup cols={3}>
+  <Card title="contracts.ts" icon="code">
+    TypeScript schema exports and anchor metadata for use in your application code.
+  </Card>
+  <Card title="openapi.json" icon="brackets-curly">
+    OpenAPI 3.1 component schemas — import or `$ref` these in your own OpenAPI documents.
+  </Card>
+  <Card title="reference.json" icon="book">
+    Compact contract reference plus the Studio UI handshake and ownership notes.
+  </Card>
+</CardGroup>
+
+### Consuming schemas in TypeScript
+
+Import the generated `contracts.ts` export to access schema IDs and anchor metadata directly in your validator setup:
+
+```ts
+import contracts from '@jami-studio/harness-contracts/generated/contracts';
+
+// Access a schema ID for use with your JSON Schema validator
+console.log(contracts.runEvent.id);
+// → 'https://jami.studio/schemas/harness/run-event.schema.json'
+
+console.log(contracts.toolExecution.id);
+// → 'https://jami.studio/schemas/harness/tool-execution.schema.json'
+```
+
+### Consuming schemas via OpenAPI
+
+If you prefer OpenAPI `$ref` resolution, import `openapi.json` into your document:
+
+```json
+{
+  "$ref": "node_modules/@jami-studio/harness-contracts/generated/openapi.json#/components/schemas/PolicyDecision"
+}
+```
+
+### Schema IDs are the stable reference
+
+Always reference anchors by their schema ID, not by file path. The schema IDs are stable across patch releases and are what your validators and OpenAPI tooling should resolve against.
+
+## Cross-Field Validation Rules
+
+The contracts validation gate enforces semantic rules that go beyond structural JSON Schema checks. Your fixtures and consuming code must satisfy all of these:
+
+<Steps>
+  <Step title="Non-allow policy decisions carry audit evidence">
+    Every `policyDecision` with an outcome other than `allow` must include an audit evidence reference. Decisions without evidence are rejected.
+  </Step>
+  <Step title="Approval requests avoid replayable token values">
+    `approvalRequest` records must not contain token values that could be replayed. Only binding metadata is permitted.
+  </Step>
+  <Step title="Secret references carry only reference metadata">
+    `secretRef` records carry scoped reference metadata and redaction state. Actual secret values must never appear in a `secretRef`.
+  </Step>
+  <Step title="Evidence packets reject secret-bearing packets without redaction">
+    `evidencePacket` records that include secret-bearing content are rejected unless a redaction policy is present.
+  </Step>
+  <Step title="Tool executions carry full envelope references">
+    Every `toolExecution` record must include references to policy, audit, trace, evidence, artifact, and redaction outputs. Incomplete envelopes are rejected.
+  </Step>
+</Steps>
+
+<Warning>
+  Negative fixture coverage is required. The validation gate explicitly checks that denied actions without denial evidence, renderer errors without error state, and unsafe UI props all fail validation. If you add a new anchor, you must supply both positive and negative fixtures.
+</Warning>
+
+## Fixture Coverage
+
+Compatibility fixtures in `fixtures/compatibility/` and `fixtures/shared-seams/` prove every anchor against the contract gate. Coverage spans:
+
+- Unsupported UI components and invalid payloads
+- Denied actions, renderer error states, and artifact views
+- Prompt injection denial, tool metadata poisoning denial, and MCP transport abuse denial
+- Secret exfiltration denial and cross-scope action denial
+- Approval replay rejection and secret-reference value leakage rejection
+- Completed, denied, unsupported, and invalid tool execution records
+- Shared seam coverage for `runEvent`, `uiPayload`, `artifactView`, `actionRef`, `themeRef`, `suiteRef`, `evidencePacket`, `memoryRecord`, `contextPack`, and `capabilityManifest`
+
+## Schema Validation
+
+The package ships a validation gate that enforces fixture coverage and cross-field contract semantics on every schema. When you consume the published package, the generated artifacts are already validated — no additional steps are needed on your end.
+
+If you are contributing schema changes to the harness repository, run the full validation suite after modifying any schema file to confirm generation, drift, and fixture coverage all pass. Refer to the contributor guide in the repository for details.

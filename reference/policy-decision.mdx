@@ -1,0 +1,235 @@
+---
+title: "policyDecision Schema: Default-Deny Action Decisions"
+sidebarTitle: "policyDecision"
+description: "policyDecision records every harness action decision with actor, scope, risk, and evidence refs. Default-deny: actions need an explicit allow to proceed."
+---
+
+The Jami Harness policy engine operates on a default-deny principle — every action a run attempts to take must pass an explicit policy evaluation before the harness executes it. The `policyDecision` schema records the outcome of that evaluation. It captures the actor, project, environment, requested and matched scopes, risk classification, the final decision, any redactions applied to the decision record itself, and references to the audit event and evidence packet that preserve the full chain of provenance. Decisions travel through the system as typed identifiers, not raw strings, so downstream consumers can resolve them from the canonical store without risking injection via the decision record.
+
+<Info>
+  **Schema ID:** `https://jami.studio/schemas/harness/policy-decision.schema.json`
+  — version `2026-06-09`
+</Info>
+
+## Decision outcomes
+
+<CardGroup cols={2}>
+  <Card title="allow" icon="circle-check">
+    The action is permitted under the current policy. Elevated-risk `allow` decisions must carry an `approvalRef`.
+  </Card>
+  <Card title="deny" icon="ban">
+    The action is blocked. The decision must carry both `auditRef` and `evidenceRef` — a deny without audit evidence is invalid.
+  </Card>
+  <Card title="needs_approval" icon="clock">
+    The action is deferred pending human approval. The associated `approvalRequest` record tracks the lifecycle.
+  </Card>
+  <Card title="needs_owner" icon="user-shield">
+    The action requires owner-level authorization that the current actor cannot provide.
+  </Card>
+</CardGroup>
+
+## Risk classifications
+
+The `risk` field classifies the category of harm the action could cause. The harness uses this value to select the appropriate policy rule and determine whether an `approvalRef` is required on an `allow` decision.
+
+| Risk value | Meaning |
+|---|---|
+| `read` | Read-only access to data or state |
+| `write` | Writes or mutations to data or state |
+| `destructive` | Irreversible deletions or overwrites |
+| `external` | Calls to external services or networks |
+| `secret_adjacent` | Access to or movement of secret-adjacent material |
+| `unknown` | Risk level could not be determined at decision time |
+
+## Schema fields
+
+<ResponseField name="schemaVersion" type="string" required>
+  Always `"2026-06-09"`. The harness rejects records with any other value.
+</ResponseField>
+
+<ResponseField name="decisionId" type="string" required>
+  Unique identifier for this decision record. Must match `^pol_[a-z0-9][a-z0-9_-]*$`.
+</ResponseField>
+
+<ResponseField name="runId" type="string" required>
+  The run that triggered this policy evaluation. Must match `^run_[a-z0-9][a-z0-9_-]*$`.
+</ResponseField>
+
+<ResponseField name="actorId" type="string" required>
+  The actor whose permissions were evaluated. Must match `^actor_[a-z0-9][a-z0-9_-]*$`.
+</ResponseField>
+
+<ResponseField name="projectId" type="string" required>
+  The project context for the evaluation. Must match `^proj_[a-z0-9][a-z0-9_-]*$`.
+</ResponseField>
+
+<ResponseField name="environment" type="string (enum)" required>
+  The deployment environment at the time of the decision. One of: `local`, `preview`, `production`, `unknown`. Policy rules may differ across environments.
+</ResponseField>
+
+<ResponseField name="decision" type="string (enum)" required>
+  The outcome of the evaluation. One of: `allow`, `deny`, `needs_approval`, `needs_owner`.
+</ResponseField>
+
+<ResponseField name="risk" type="string (enum)" required>
+  Risk classification of the action. One of: `read`, `write`, `destructive`, `external`, `secret_adjacent`, `unknown`.
+</ResponseField>
+
+<ResponseField name="requestedScopes" type="array of string" required>
+  The scopes the action requested at evaluation time. May be empty only if the action requests no scopes, but the array must always be present.
+</ResponseField>
+
+<ResponseField name="matchedScopes" type="array of string" required>
+  The subset of `requestedScopes` that the actor's grants cover. A denied decision typically produces an empty array here.
+</ResponseField>
+
+<ResponseField name="reasons" type="array of string" required>
+  At least one human-readable explanation for the decision. The harness never produces a decision without reasons.
+</ResponseField>
+
+<ResponseField name="approvalRef" type="string">
+  Reference to an `approvalRequest` record. Must match `^apr_[a-z0-9][a-z0-9_-]*$`. **Required** when `decision` is `allow` and `risk` is `destructive`, `external`, or `secret_adjacent` (elevated-risk allow).
+</ResponseField>
+
+<ResponseField name="auditRef" type="string">
+  Reference to the `auditEvent` record preserving the full decision evidence. Must match `^aud_[a-z0-9][a-z0-9_-]*$`. **Required** when `decision` is anything other than `allow`.
+</ResponseField>
+
+<ResponseField name="evidenceRef" type="string">
+  Reference to the `evidencePacket` that captures additional provenance. Must match `^ev_[a-z0-9][a-z0-9_-]*$`. **Required** when `decision` is anything other than `allow`.
+</ResponseField>
+
+<ResponseField name="redactions" type="array of object" required>
+  List of fields in this decision record that were redacted before the record was written. May be an empty array when no redactions were applied.
+
+  <Expandable title="redaction entry fields">
+    <ResponseField name="field" type="string" required>
+      Name or path of the field that was redacted.
+    </ResponseField>
+    <ResponseField name="mode" type="string (enum)" required>
+      How the field was handled. One of `none`, `redacted` (value replaced with a placeholder), or `omitted` (field absent from the stored record).
+    </ResponseField>
+    <ResponseField name="reason" type="string" required>
+      Why this field was redacted. Appears in audit output even when the field value itself is absent.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="decidedAt" type="string (date-time)" required>
+  ISO 8601 timestamp of when the policy evaluation completed.
+</ResponseField>
+
+## Examples
+
+<CodeGroup>
+
+```json Deny — cross-scope action
+{
+  "schemaVersion": "2026-06-09",
+  "decisionId": "pol_cross_scope_action_denied",
+  "runId": "run_policy_fixture",
+  "actorId": "actor_developer",
+  "projectId": "proj_jami_harness",
+  "environment": "local",
+  "decision": "deny",
+  "risk": "write",
+  "requestedScopes": ["project:other:write"],
+  "matchedScopes": [],
+  "reasons": ["Actor scope does not cover requested project write scope."],
+  "auditRef": "aud_cross_scope_action_denied",
+  "evidenceRef": "ev_cross_scope_action_denied",
+  "redactions": [],
+  "decidedAt": "2026-06-09T12:00:00.000Z"
+}
+```
+
+```json Deny — secret exfiltration
+{
+  "schemaVersion": "2026-06-09",
+  "decisionId": "pol_secret_exfiltration_denied",
+  "runId": "run_policy_fixture",
+  "actorId": "actor_developer",
+  "projectId": "proj_jami_harness",
+  "environment": "local",
+  "decision": "deny",
+  "risk": "secret_adjacent",
+  "requestedScopes": ["secret:read"],
+  "matchedScopes": [],
+  "reasons": [
+    "Requested action attempted to place a secret reference into model-visible output."
+  ],
+  "auditRef": "aud_secret_exfiltration_denied",
+  "evidenceRef": "ev_secret_exfiltration_denied",
+  "redactions": [
+    {
+      "field": "secretRefs",
+      "mode": "omitted",
+      "reason": "secret reference metadata withheld from model context"
+    }
+  ],
+  "decidedAt": "2026-06-09T12:00:00.000Z"
+}
+```
+
+```json Deny — prompt injection
+{
+  "schemaVersion": "2026-06-09",
+  "decisionId": "pol_prompt_injection_denied",
+  "runId": "run_policy_fixture",
+  "actorId": "actor_developer",
+  "projectId": "proj_jami_harness",
+  "environment": "local",
+  "decision": "deny",
+  "risk": "external",
+  "requestedScopes": ["tool:network"],
+  "matchedScopes": [],
+  "reasons": ["Untrusted prompt content requested external tool execution."],
+  "auditRef": "aud_prompt_injection_denied",
+  "evidenceRef": "ev_prompt_injection_denied",
+  "redactions": [
+    {
+      "field": "prompt",
+      "mode": "redacted",
+      "reason": "prompt injection payload excluded from evidence"
+    }
+  ],
+  "decidedAt": "2026-06-09T12:00:00.000Z"
+}
+```
+
+```json Deny — MCP transport abuse
+{
+  "schemaVersion": "2026-06-09",
+  "decisionId": "pol_mcp_transport_abuse_denied",
+  "runId": "run_policy_fixture",
+  "actorId": "actor_developer",
+  "projectId": "proj_jami_harness",
+  "environment": "local",
+  "decision": "deny",
+  "risk": "external",
+  "requestedScopes": ["tool:mcp:connect"],
+  "matchedScopes": [],
+  "reasons": [
+    "Remote MCP transport did not declare trusted origin and session binding."
+  ],
+  "auditRef": "aud_mcp_transport_abuse_denied",
+  "evidenceRef": "ev_mcp_transport_abuse_denied",
+  "redactions": [],
+  "decidedAt": "2026-06-09T12:00:00.000Z"
+}
+```
+
+</CodeGroup>
+
+## Validation invariants
+
+<Warning>
+  The harness enforces these invariants at schema boundary. Records that violate them are rejected and the offending action is not executed.
+</Warning>
+
+- **Non-allow decisions must carry audit evidence.** Any decision with `decision` set to `deny`, `needs_approval`, or `needs_owner` must include both `auditRef` and `evidenceRef`. A `deny` record without an audit reference fails validation.
+- **Elevated-risk allow decisions must carry an approval reference.** When `decision` is `allow` and `risk` is `destructive`, `external`, or `secret_adjacent`, the record must include `approvalRef`.
+- **`reasons` must have at least one entry.** The harness never produces a decision record with an empty `reasons` array.
+- **`redactions` must be present.** Supply an empty array `[]` when no redactions were applied — the field may not be omitted.
+- **Approval records must not contain replayable token values.** Any linked `approvalRequest` record must store approval evidence by reference, not by embedding replayable tokens inline.
+- **Audit events linked via `auditRef` must redact non-allow outcomes.** The referenced `auditEvent` must apply the appropriate `privatePayloadPolicy` to preserve redaction state across the audit chain.
